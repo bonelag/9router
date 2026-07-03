@@ -9,10 +9,9 @@ const AG2O = (req) =>
   translateRequest(FORMATS.ANTIGRAVITY, FORMATS.OPENAI, "m", { request: req }, true, null, null);
 
 describe("Antigravity → OpenAI", () => {
-  // antigravity-to-openai.js:177-189 — content with BOTH functionResponse and functionCall/text
-  // returns toolResults early → drops the tool calls / text.
-  // KNOWN BUG
-  it.fails("functionResponse + functionCall in same content keeps both", () => {
+  // antigravity-to-openai.js — content with BOTH functionResponse and functionCall/text
+  // previously returned toolResults early → dropped tool calls / text (fixed in #2225)
+  it("functionResponse + functionCall in same content keeps both", () => {
     const out = AG2O({
       contents: [{
         role: "model",
