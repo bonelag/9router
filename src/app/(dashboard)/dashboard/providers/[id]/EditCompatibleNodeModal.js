@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
-import { Button, Badge, Input, Modal, Select } from "@/shared/components";
+import { Button, Badge, Input, Modal, Select, Toggle } from "@/shared/components";
 
 export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose, isAnthropic }) {
   const [formData, setFormData] = useState({
@@ -10,6 +10,8 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
     prefix: "",
     apiType: "chat",
     baseUrl: "https://api.openai.com/v1",
+    headersEnabled: false,
+    customHeaders: [{ key: "", value: "" }],
   });
   const [saving, setSaving] = useState(false);
   const [checkKey, setCheckKey] = useState("");
@@ -24,6 +26,10 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
         prefix: node.prefix || "",
         apiType: node.apiType || "chat",
         baseUrl: node.baseUrl || (isAnthropic ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"),
+        headersEnabled: node.headersEnabled || false,
+        customHeaders: node.customHeaders && node.customHeaders.length > 0
+          ? node.customHeaders.map(h => ({ ...h }))
+          : [{ key: "", value: "" }],
       });
     }
   }, [node, isAnthropic]);
@@ -37,10 +43,17 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
     if (!formData.name.trim() || !formData.prefix.trim() || !formData.baseUrl.trim()) return;
     setSaving(true);
     try {
+      const headersEnabled = formData.headersEnabled === true;
+      const customHeaders = headersEnabled && Array.isArray(formData.customHeaders)
+        ? formData.customHeaders.filter((h) => h.key && h.key.trim())
+        : [];
+
       const payload = {
         name: formData.name,
         prefix: formData.prefix,
         baseUrl: formData.baseUrl,
+        headersEnabled,
+        customHeaders,
       };
       if (!isAnthropic) {
         payload.apiType = formData.apiType;
@@ -54,6 +67,11 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
   const handleValidate = async () => {
     setValidating(true);
     try {
+      const headersEnabled = formData.headersEnabled === true;
+      const customHeaders = headersEnabled && Array.isArray(formData.customHeaders)
+        ? formData.customHeaders.filter((h) => h.key && h.key.trim())
+        : [];
+
       const res = await fetch("/api/provider-nodes/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -61,7 +79,9 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
           baseUrl: formData.baseUrl,
           apiKey: checkKey,
           type: isAnthropic ? "anthropic-compatible" : "openai-compatible",
-          modelId: checkModelId.trim() || undefined
+          modelId: checkModelId.trim() || undefined,
+          headersEnabled,
+          customHeaders,
         }),
       });
       const data = await res.json();
@@ -107,6 +127,64 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
           placeholder={isAnthropic ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"}
           hint={`Use the base URL (ending in /v1) for your ${isAnthropic ? "Anthropic" : "OpenAI"}-compatible API.`}
         />
+        <div className="flex flex-col gap-3 py-1">
+          <Toggle
+            label="Custom Headers"
+            description="Add one or more custom HTTP headers sent to this provider"
+            checked={formData.headersEnabled}
+            onChange={(val) => setFormData({ ...formData, headersEnabled: val })}
+          />
+          {formData.headersEnabled && (
+            <div className="flex flex-col gap-2 p-3 bg-surface-2 rounded-xl border border-border">
+              {formData.customHeaders.map((header, idx) => (
+                <div key={idx} className="flex gap-2 items-center">
+                  <Input
+                    placeholder="Key (e.g. X-Header)"
+                    value={header.key}
+                    onChange={(e) => {
+                      const newHeaders = [...formData.customHeaders];
+                      newHeaders[idx].key = e.target.value;
+                      setFormData({ ...formData, customHeaders: newHeaders });
+                    }}
+                    className="flex-1"
+                  />
+                  <Input
+                    placeholder="Value"
+                    value={header.value}
+                    onChange={(e) => {
+                      const newHeaders = [...formData.customHeaders];
+                      newHeaders[idx].value = e.target.value;
+                      setFormData({ ...formData, customHeaders: newHeaders });
+                    }}
+                    className="flex-1"
+                  />
+                  <Button
+                    variant="ghost"
+                    icon="delete"
+                    onClick={() => {
+                      const newHeaders = formData.customHeaders.filter((_, i) => i !== idx);
+                      setFormData({ ...formData, customHeaders: newHeaders });
+                    }}
+                    className="text-red-500 hover:text-red-600 p-2 mt-1"
+                  />
+                </div>
+              ))}
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setFormData({
+                    ...formData,
+                    customHeaders: [...formData.customHeaders, { key: "", value: "" }],
+                  });
+                }}
+                className="mt-1 self-start"
+              >
+                + Add Header
+              </Button>
+            </div>
+          )}
+        </div>
         <div className="flex gap-2">
           <Input
             label="API Key (for Check)"
@@ -154,8 +232,14 @@ EditCompatibleNodeModal.propTypes = {
     prefix: PropTypes.string,
     apiType: PropTypes.string,
     baseUrl: PropTypes.string,
+    headersEnabled: PropTypes.bool,
+    customHeaders: PropTypes.arrayOf(PropTypes.shape({
+      key: PropTypes.string,
+      value: PropTypes.string,
+    })),
   }),
   onSave: PropTypes.func.isRequired,
   onClose: PropTypes.func.isRequired,
   isAnthropic: PropTypes.bool,
 };
+

@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 
 const projectRoot = dirname(fileURLToPath(import.meta.url));
 // CLI bundling needs workspace root so tracing includes hoisted node_modules (slim ~50MB).
@@ -8,6 +9,8 @@ const tracingRoot = process.env.NEXT_TRACING_ROOT_MODE === "workspace"
   ? join(projectRoot, "..")
   : projectRoot;
 const proxyClientMaxBodySize = process.env.NINEROUTER_PROXY_CLIENT_MAX_BODY_SIZE || "128mb";
+
+const homeDir = homedir().replace(/\\/g, "/");
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -19,7 +22,10 @@ const nextConfig = {
   },
   outputFileTracingRoot: tracingRoot,
   outputFileTracingExcludes: {
-    "*": ["./gitbook/**/*"]
+    "*": [
+      "./gitbook/**/*",
+      ...(process.platform === "win32" ? [`${homeDir}/**`] : [])
+    ]
   },
   images: {
     unoptimized: true

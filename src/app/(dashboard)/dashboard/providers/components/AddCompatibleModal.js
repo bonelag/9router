@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
-import { Badge, Button, Input, Modal, Select } from "@/shared/components";
+import { Badge, Button, Input, Modal, Select, Toggle } from "@/shared/components";
 
 const VARIANT_CONFIG = {
   openai: {
@@ -41,6 +41,8 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
     prefix: "",
     ...(config.hasApiType ? { apiType: "chat" } : {}),
     baseUrl: config.defaultBaseUrl,
+    headersEnabled: false,
+    customHeaders: [{ key: "", value: "" }],
   });
 
   const [formData, setFormData] = useState(initialFormData);
@@ -65,6 +67,11 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
     if (!formData.name.trim() || !formData.prefix.trim() || !formData.baseUrl.trim()) return;
     setSubmitting(true);
     try {
+      const headersEnabled = formData.headersEnabled === true;
+      const customHeaders = headersEnabled && Array.isArray(formData.customHeaders)
+        ? formData.customHeaders.filter((h) => h.key && h.key.trim())
+        : [];
+
       const res = await fetch("/api/provider-nodes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -74,6 +81,8 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
           ...(config.hasApiType ? { apiType: formData.apiType } : {}),
           baseUrl: formData.baseUrl,
           type: config.type,
+          headersEnabled,
+          customHeaders,
         }),
       });
       const data = await res.json();
@@ -93,6 +102,11 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
   const handleValidate = async () => {
     setValidating(true);
     try {
+      const headersEnabled = formData.headersEnabled === true;
+      const customHeaders = headersEnabled && Array.isArray(formData.customHeaders)
+        ? formData.customHeaders.filter((h) => h.key && h.key.trim())
+        : [];
+
       const res = await fetch("/api/provider-nodes/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -101,6 +115,8 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
           apiKey: checkKey,
           type: config.type,
           modelId: checkModelId.trim() || undefined,
+          headersEnabled,
+          customHeaders,
         }),
       });
       const data = await res.json();
@@ -165,6 +181,64 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
           placeholder={config.defaultBaseUrl}
           hint={config.baseUrlHint}
         />
+        <div className="flex flex-col gap-3 py-1">
+          <Toggle
+            label="Custom Headers"
+            description="Add one or more custom HTTP headers sent to this provider"
+            checked={formData.headersEnabled}
+            onChange={(val) => setFormData({ ...formData, headersEnabled: val })}
+          />
+          {formData.headersEnabled && (
+            <div className="flex flex-col gap-2 p-3 bg-surface-2 rounded-xl border border-border">
+              {formData.customHeaders.map((header, idx) => (
+                <div key={idx} className="flex gap-2 items-center">
+                  <Input
+                    placeholder="Key (e.g. X-Header)"
+                    value={header.key}
+                    onChange={(e) => {
+                      const newHeaders = [...formData.customHeaders];
+                      newHeaders[idx].key = e.target.value;
+                      setFormData({ ...formData, customHeaders: newHeaders });
+                    }}
+                    className="flex-1"
+                  />
+                  <Input
+                    placeholder="Value"
+                    value={header.value}
+                    onChange={(e) => {
+                      const newHeaders = [...formData.customHeaders];
+                      newHeaders[idx].value = e.target.value;
+                      setFormData({ ...formData, customHeaders: newHeaders });
+                    }}
+                    className="flex-1"
+                  />
+                  <Button
+                    variant="ghost"
+                    icon="delete"
+                    onClick={() => {
+                      const newHeaders = formData.customHeaders.filter((_, i) => i !== idx);
+                      setFormData({ ...formData, customHeaders: newHeaders });
+                    }}
+                    className="text-red-500 hover:text-red-600 p-2 mt-1"
+                  />
+                </div>
+              ))}
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setFormData({
+                    ...formData,
+                    customHeaders: [...formData.customHeaders, { key: "", value: "" }],
+                  });
+                }}
+                className="mt-1 self-start"
+              >
+                + Add Header
+              </Button>
+            </div>
+          )}
+        </div>
         <Input
           label="API Key (for Check)"
           type="password"

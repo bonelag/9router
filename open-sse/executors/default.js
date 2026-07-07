@@ -5,6 +5,7 @@ import { OAUTH_ENDPOINTS, buildKimiHeaders } from "../config/appConstants.js";
 import { buildClineHeaders } from "../shared/clineAuth.js";
 import { getCachedClaudeHeaders } from "../utils/claudeHeaderCache.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { applyCustomHeaders } from "../utils/customHeaders.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
 
@@ -200,6 +201,10 @@ export class DefaultExecutor extends BaseExecutor {
         }
       }
     }
+
+    // User-defined custom headers win over everything above (auth, identity
+    // stripping, etc.) — applied last so e.g. a custom user-agent sticks.
+    applyCustomHeaders(headers, credentials?.providerSpecificData);
 
     if (stream) headers["Accept"] = "text/event-stream";
     return headers;

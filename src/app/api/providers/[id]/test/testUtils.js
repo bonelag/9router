@@ -3,6 +3,7 @@ import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { testProxyUrl } from "@/lib/network/proxyTest";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 import { getDefaultModel } from "open-sse/config/providerModels.js";
+import { applyCustomHeaders } from "open-sse/utils/customHeaders.js";
 import { resolveOllamaLocalHost, PROVIDERS } from "open-sse/config/providers.js";
 import {
   refreshProviderCredentials,
@@ -391,20 +392,23 @@ async function testOAuthConnection(connection, effectiveProxy = null) {
 }
 
 async function fetchWithConnectionProxy(url, options = {}, effectiveProxy = null) {
+  const { proxyAwareFetch } = await import("open-sse/utils/proxyFetch.js");
+
+  // Always bypass Next.js native fetch because it overrides user-agent to 'node' aggressively
+  const safeOptions = { ...options, bypassNextjsFetch: true };
+
   // Vercel relay: forward via relay URL
   if (effectiveProxy?.vercelRelayUrl) {
-    const { proxyAwareFetch } = await import("open-sse/utils/proxyFetch.js");
-    return proxyAwareFetch(url, options, {
+    return proxyAwareFetch(url, safeOptions, {
       vercelRelayUrl: effectiveProxy.vercelRelayUrl,
     });
   }
 
   if (!effectiveProxy?.connectionProxyEnabled || !effectiveProxy?.connectionProxyUrl) {
-    return fetch(url, options);
+    return proxyAwareFetch(url, safeOptions);
   }
 
-  const { proxyAwareFetch } = await import("open-sse/utils/proxyFetch.js");
-  return proxyAwareFetch(url, options, {
+  return proxyAwareFetch(url, safeOptions, {
     connectionProxyEnabled: true,
     connectionProxyUrl: effectiveProxy.connectionProxyUrl,
     connectionNoProxy: effectiveProxy.connectionNoProxy || "",
@@ -416,8 +420,11 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
     const modelsBase = connection.providerSpecificData?.baseUrl;
     if (!modelsBase) return { valid: false, error: "Missing base URL" };
     try {
+      const baseHeaders = { "Authorization": `Bearer ${connection.apiKey}` };
+      applyCustomHeaders(baseHeaders, connection.providerSpecificData);
+
       const res = await fetchWithConnectionProxy(`${modelsBase.replace(/\/$/, "")}/models`, {
-        headers: { "Authorization": `Bearer ${connection.apiKey}` },
+        headers: baseHeaders,
       }, effectiveProxy);
       return { valid: res.ok, error: res.ok ? null : "Invalid API key or base URL" };
     } catch (err) {
@@ -433,14 +440,18 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
       if (modelsBase.endsWith("/messages")) modelsBase = modelsBase.slice(0, -9);
       const messagesUrl = `${modelsBase}/v1/messages`;
       const model = connection.defaultModel || "claude-3-haiku-20240307";
+
+      const baseHeaders = {
+        "x-api-key": connection.apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "Authorization": `Bearer ${connection.apiKey}`,
+      };
+      applyCustomHeaders(baseHeaders, connection.providerSpecificData);
+
       const res = await fetchWithConnectionProxy(messagesUrl, {
         method: "POST",
-        headers: {
-          "x-api-key": connection.apiKey,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json",
-          "Authorization": `Bearer ${connection.apiKey}`,
-        },
+        headers: baseHeaders,
         body: JSON.stringify({
           model,
           max_tokens: 1,

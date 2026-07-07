@@ -1,6 +1,7 @@
 import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { shouldRefreshCredentials } from "../services/oauthCredentialManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { applyCustomHeaders } from "../utils/customHeaders.js";
 import { dbg } from "../utils/debugLog.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
 
@@ -66,6 +67,9 @@ export class BaseExecutor {
         headers["Authorization"] = `Bearer ${credentials.apiKey}`;
       }
     }
+
+    // Merge custom headers if enabled for dynamic compatible providers
+    applyCustomHeaders(headers, credentials?.providerSpecificData);
 
     if (stream) {
       headers["Accept"] = "text/event-stream";
@@ -144,7 +148,8 @@ export class BaseExecutor {
           method: "POST",
           headers,
           body: bodyStr,
-          signal: mergedSignal
+          signal: mergedSignal,
+          bypassNextjsFetch: true
         }, proxyOptions);
         clearTimeout(connectTimer);
         const ct = response.headers?.get?.("content-type") || "";

@@ -55,15 +55,17 @@ export async function getProviderNodeById(id) {
 export async function createProviderNode(data) {
   const db = await getAdapter();
   const now = new Date().toISOString();
+  const { id, type, name, prefix, apiType, baseUrl, ...extra } = data;
   const node = {
-    id: data.id || uuidv4(),
-    type: data.type,
-    name: data.name,
-    prefix: data.prefix,
-    apiType: data.apiType,
-    baseUrl: data.baseUrl,
+    id: id || uuidv4(),
+    type,
+    name,
+    prefix,
+    apiType,
+    baseUrl,
     createdAt: now,
     updatedAt: now,
+    ...extra,
   };
   upsert(db, node);
   return node;
