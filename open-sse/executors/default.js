@@ -82,7 +82,7 @@ export class DefaultExecutor extends BaseExecutor {
     super(provider, PROVIDERS[provider] || PROVIDERS.openai);
   }
 
-  transformRequest(model, body) {
+  transformRequest(model, body, stream, credentials) {
     const transformed = this.applyJsonSchemaFallback(body);
 
     if (transformed && typeof transformed === "object") {
@@ -91,9 +91,76 @@ export class DefaultExecutor extends BaseExecutor {
         delete transformed.client_metadata;
       }
       stripUnsupportedParams(this.provider, model, transformed);
+      if (transformed.reasoning_effort === "none") {
+        delete transformed.reasoning_effort;
+      }
+      // Last-line body sanitizer for third-party Anthropic Messages gateways.
+      // Covers passthrough/legacy paths that skip prepareClaudeRequest.
+      this.sanitizeAnthropicCompatibleBody(transformed, credentials);
     }
 
     return injectReasoningContent({ provider: this.provider, model, body: transformed });
+  }
+
+  // Strip first-party-only Claude body fields that agent_router-style gateways
+  // reject as content-blocked / invalid params when the baseUrl is not Anthropic.
+  sanitizeAnthropicCompatibleBody(body, credentials) {
+    if (!this.provider?.startsWith?.("anthropic-compatible-") || !body || typeof body !== "object") {
+      return body;
+    }
+    const baseUrl = credentials?.providerSpecificData?.baseUrl || "";
+    const isOfficialAnthropic = baseUrl === "" || baseUrl.includes("api.anthropic.com");
+    if (isOfficialAnthropic) return body;
+
+    // output_config.effort + extended thinking require Anthropic first-party betas.
+    // agent_router maps those rejects to content-blocked even for "hi" when Basic Chat
+    // (or Claude Code) attaches thinking / reasoning_effort by default.
+    delete body.output_config;
+    delete body.thinking;
+    delete body.reasoning_effort;
+    delete body.reasoning;
+
+    // Drop ALL cache_control — extended TTL and even plain ephemeral can trip
+    // third-party validators that don't implement prompt caching.
+    const stripCacheControl = (obj) => {
+      if (obj && typeof obj === "object" && obj.cache_control !== undefined) {
+        delete obj.cache_control;
+      }
+    };
+    if (Array.isArray(body.system)) {
+      for (const block of body.system) stripCacheControl(block);
+      // Drop Claude Code identity spoof — useless without first-party OAuth and
+      // some resellers flag it as abuse.
+      body.system = body.system.filter(
+        (block) => !(typeof block?.text === "string" && block.text.includes("You are Claude Code"))
+      );
+      if (body.system.length === 0) delete body.system;
+    }
+    if (Array.isArray(body.messages)) {
+      for (const msg of body.messages) {
+        if (Array.isArray(msg?.content)) {
+          // Drop thinking/redacted_thinking blocks from history — gateways that
+          // reject request-level thinking also reject history thinking blocks.
+          msg.content = msg.content.filter(
+            (block) => block?.type !== "thinking" && block?.type !== "redacted_thinking"
+          );
+          for (const block of msg.content) stripCacheControl(block);
+          // If an assistant message became empty after stripping, leave a single
+          // space so the messages API doesn't reject empty content.
+          if (msg.role === "assistant" && msg.content.length === 0) {
+            msg.content = [{ type: "text", text: " " }];
+          }
+        }
+      }
+    }
+    if (Array.isArray(body.tools)) {
+      for (const tool of body.tools) stripCacheControl(tool);
+    }
+
+    // metadata.user_id (Claude Code fingerprint) is first-party-only.
+    if (body.metadata) delete body.metadata;
+
+    return body;
   }
 
   // Fallback json_schema → json_object for openai-compatible providers without native Structured Output.
@@ -184,21 +251,14 @@ export class DefaultExecutor extends BaseExecutor {
         delete headers["Anthropic-Dangerous-Direct-Browser-Access"];
         delete headers["x-app"];
         delete headers["X-App"];
-        // Strip claude-code-20250219 from Anthropic-Beta / anthropic-beta
-        for (const betaKey of ["anthropic-beta", "Anthropic-Beta"]) {
-          if (headers[betaKey]) {
-            const filtered = headers[betaKey]
-              .split(",")
-              .map(s => s.trim())
-              .filter(f => f && f !== "claude-code-20250219")
-              .join(",");
-            if (filtered) {
-              headers[betaKey] = filtered;
-            } else {
-              delete headers[betaKey];
-            }
-          }
-        }
+        // Drop ALL Anthropic-Beta flags for third-party gateways. These are Anthropic
+        // first-party betas (claude-code, interleaved-thinking, effort, …) the reseller
+        // doesn't implement; some reject the request outright once a beta feature is
+        // actually exercised (e.g. extended thinking → "content-blocked"). A plain
+        // request without beta headers is the safe common denominator. Official
+        // api.anthropic.com is exempted above (isOfficialAnthropic).
+        delete headers["anthropic-beta"];
+        delete headers["Anthropic-Beta"];
       }
     }
 

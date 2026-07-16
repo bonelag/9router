@@ -4,6 +4,7 @@
 
 import { getCapabilitiesForModel } from "../../providers/capabilities.js";
 import { PROVIDERS } from "../../providers/index.js";
+import { isAnthropicCompatible } from "../../services/provider.js";
 import { LEVEL_TO_BUDGET, budgetToLevel, effortToBudget, effortToThinkingLevel } from "./thinking.js";
 
 // Map a target wire-format to its native thinking format (when capability has none).
@@ -103,13 +104,19 @@ export function extractThinking(body) {
 // at the call-site where intent is snapshotted before format translation.
 export const captureThinking = extractThinking;
 
-// Resolve thinking format: provider override > capability > derive(targetFormat).
+// Resolve thinking format: capability > provider override > derive(targetFormat).
 function resolveFormat(targetFormat, model, provider) {
-  const providerFmt = provider ? PROVIDERS[provider]?.thinkingFormat : null;
-  if (providerFmt) return providerFmt;
   const caps = getCapabilitiesForModel(provider, model);
-  if (caps.thinkingFormat) return caps.thinkingFormat;
-  return FORMAT_TO_NATIVE[targetFormat] || "openai";
+  let fmt = caps.thinkingFormat
+    || (provider ? PROVIDERS[provider]?.thinkingFormat : null)
+    || FORMAT_TO_NATIVE[targetFormat]
+    || "openai";
+  // "claude-adaptive" emits output_config.effort — Anthropic's newest "effort" beta,
+  // which third-party anthropic-compatible proxies don't understand (they ignore it →
+  // no thinking). Downgrade to "claude-budget" (standard thinking.budget_tokens) for
+  // those dynamic nodes so extended thinking actually turns on.
+  if (fmt === "claude-adaptive" && isAnthropicCompatible(provider)) fmt = "claude-budget";
+  return fmt;
 }
 
 // Convert unified config to a budget number (for budget-based formats).
@@ -174,7 +181,7 @@ function stripAll(body) {
 }
 
 // Apply unified thinking config to body in the resolved provider-native format.
-function applyFormat(fmt, body, cfg, caps) {
+function applyFormat(fmt, body, cfg, caps, model = "") {
   const none = cfg.mode === "none";
   const canDisable = caps.thinkingCanDisable !== false;
   // Model cannot disable thinking → clamp "none" to minimal effort instead.
@@ -184,7 +191,17 @@ function applyFormat(fmt, body, cfg, caps) {
     case "openai": {
       if (none && canDisable) { body.reasoning_effort = "none"; break; }
       const level = toLevel(eff);
-      if (level) body.reasoning_effort = level;
+      // GPT-5.x accepts native "xhigh"; other openai-format providers don't → clamp to high.
+      const supportsXhigh = /gpt-5/i.test(model);
+      if (level === "minimal") {
+        body.reasoning_effort = "low";
+      } else if (level === "xhigh") {
+        body.reasoning_effort = supportsXhigh ? "xhigh" : "high";
+      } else if (level === "max") {
+        body.reasoning_effort = supportsXhigh ? "xhigh" : "high";
+      } else if (level) {
+        body.reasoning_effort = level;
+      }
       break;
     }
     case "claude-adaptive": {
@@ -282,6 +299,6 @@ export function applyThinking(targetFormat, model, body, provider = null, intent
 
   const fmt = resolveFormat(targetFormat, cleanModel, provider);
   stripAll(body);
-  applyFormat(fmt, body, cfg, caps);
+  applyFormat(fmt, body, cfg, caps, cleanModel);
   return body;
 }

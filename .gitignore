@@ -9,10 +9,10 @@
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
-
+product
 # testing
 /coverage
-
+.codegraph
 # next.js
 /.next/
 /.next-cli-build/

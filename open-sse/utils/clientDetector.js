@@ -55,9 +55,13 @@ export function isNativePassthrough(clientTool, provider) {
   if (!clientTool) return false;
   const nativeProviders = NATIVE_PAIRS[clientTool];
   if (!nativeProviders) return false;
-  // Support anthropic-compatible-* variants
-  const normalizedProvider = provider.startsWith("anthropic-compatible")
-    ? "anthropic"
-    : provider;
-  return nativeProviders.includes(normalizedProvider);
+  // anthropic-compatible-* nodes are third-party gateways, NOT first-party Anthropic.
+  // Claude Code's native body (output_config.effort, thinking.type=adaptive, beta-only
+  // cache_control.ttl, Anthropic-Beta flags) is rejected by many resellers as
+  // `content-blocked` / agent_router_api_error. Force the translate + prepareClaudeRequest
+  // path so the body is normalized before the upstream call.
+  if (typeof provider === "string" && provider.startsWith("anthropic-compatible")) {
+    return false;
+  }
+  return nativeProviders.includes(provider);
 }

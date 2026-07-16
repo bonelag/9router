@@ -180,6 +180,11 @@ export function normalizeClaudePassthrough(body, model = "") {
   return body;
 }
 
+// True for dynamic third-party Anthropic Messages gateways (not first-party api.anthropic.com).
+function isAnthropicCompatibleProvider(provider) {
+  return typeof provider === "string" && provider.startsWith("anthropic-compatible");
+}
+
 // Prepare request for Claude format endpoints
 // - Cleanup cache_control
 // - Filter empty messages
@@ -187,9 +192,22 @@ export function normalizeClaudePassthrough(body, model = "") {
 // - Fix tool_use/tool_result ordering
 // - Apply cloaking (billing header + fake user ID) for OAuth tokens
 export function prepareClaudeRequest(body, provider = null, apiKey = null, connectionId = null, rawHeaders = null, sessionId = null) {
+  const thirdPartyAnthropic = isAnthropicCompatibleProvider(provider);
+
   // quirk: MiniMax's Claude-compatible endpoint rejects Anthropic's output_config (400 invalid params)
-  if (PROVIDERS[provider]?.quirks?.dropOutputConfig) {
+  // Also drop for anthropic-compatible resellers: output_config.effort is an Anthropic
+  // first-party beta that agent_router-style gateways map to content-blocked.
+  if (PROVIDERS[provider]?.quirks?.dropOutputConfig || thirdPartyAnthropic) {
     delete body.output_config;
+  }
+
+  // Third-party agent_router gateways return content-blocked when extended thinking
+  // is present (thinking / adaptive / effort), even for a one-word "hi". Strip all
+  // thinking fields so chat works; first-party Anthropic keeps them.
+  if (thirdPartyAnthropic) {
+    delete body.thinking;
+    delete body.reasoning_effort;
+    delete body.reasoning;
   }
 
   // Clamp max_tokens to the model's real output ceiling. Models whose caps
@@ -215,11 +233,22 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
     }
   }
 
-  // 1. System: remove all cache_control, add only to last block with ttl 1h
+  // Drop Claude Code identity system block on third-party gateways — spoofing as
+  // "Anthropic's official CLI" is useless without first-party OAuth and some
+  // agent routers treat the spoof as abuse / content-blocked.
+  if (thirdPartyAnthropic && Array.isArray(body.system)) {
+    body.system = body.system.filter(
+      (block) => !(typeof block?.text === "string" && block.text.includes("You are Claude Code"))
+    );
+    if (body.system.length === 0) delete body.system;
+  }
+
+  // 1. System: remove all cache_control; first-party re-adds ephemeral+ttl on last block.
+  // Third-party: leave cache_control off entirely (agent_router content-blocks on it).
   if (body.system && Array.isArray(body.system)) {
     body.system = body.system.map((block, i) => {
       const { cache_control, ...rest } = block;
-      if (i === body.system.length - 1) {
+      if (!thirdPartyAnthropic && i === body.system.length - 1) {
         return { ...rest, cache_control: { type: "ephemeral", ttl: "1h" } };
       }
       return rest;
@@ -344,7 +373,7 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
 
     body.tools = body.tools.map((tool, i) => {
       const { cache_control, ...rest } = tool;
-      if (i === body.tools.length - 1) {
+      if (!thirdPartyAnthropic && i === body.tools.length - 1) {
         return { ...rest, cache_control: { type: "ephemeral", ttl: "1h" } };
       }
       return rest;

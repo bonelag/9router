@@ -15,7 +15,7 @@ function isOpenAICompatible(provider) {
   return typeof provider === "string" && provider.startsWith(OPENAI_COMPATIBLE_PREFIX);
 }
 
-function isAnthropicCompatible(provider) {
+export function isAnthropicCompatible(provider) {
   return typeof provider === "string" && provider.startsWith(ANTHROPIC_COMPATIBLE_PREFIX);
 }
 
