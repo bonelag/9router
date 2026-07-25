@@ -5,6 +5,7 @@ import { getDefaultModel } from "open-sse/config/providerModels.js";
 import { resolveOllamaLocalHost, resolveXiaomiTokenplanBaseUrl, PROVIDERS } from "open-sse/config/providers.js";
 import { openaiToCommandCodeRequest } from "open-sse/translator/request/openai-to-commandcode.js";
 import { normalizeProviderId } from "@/lib/providerNormalization";
+import { customHeadersFrom, customProviderFetch } from "open-sse/utils/customHeaders.js";
 
 // Probe a webSearch/webFetch provider using its searchConfig/fetchConfig.
 // Returns true if API key is accepted (status !== 401 && !== 403).
@@ -103,8 +104,9 @@ export async function POST(request) {
           return NextResponse.json({ error: "OpenAI Compatible node not found" }, { status: 404 });
         }
         const modelsUrl = `${node.baseUrl?.replace(/\/$/, "")}/models`;
-        const res = await fetch(modelsUrl, {
+        const res = await customProviderFetch(modelsUrl, {
           headers: { "Authorization": `Bearer ${apiKey}` },
+          providerSpecificData: customHeadersFrom(node),
         });
         isValid = res.ok;
         return NextResponse.json({
@@ -120,8 +122,10 @@ export async function POST(request) {
           return NextResponse.json({ error: "Custom Embedding node not found" }, { status: 404 });
         }
         const baseUrl = node.baseUrl?.replace(/\/$/, "");
-        const modelsRes = await fetch(`${baseUrl}/models`, {
+        const nodeHdr = customHeadersFrom(node);
+        const modelsRes = await customProviderFetch(`${baseUrl}/models`, {
           headers: { "Authorization": `Bearer ${apiKey}` },
+          providerSpecificData: nodeHdr,
         });
         if (modelsRes.ok) {
           return NextResponse.json({ valid: true });
@@ -131,9 +135,10 @@ export async function POST(request) {
           return NextResponse.json({ valid: false, error: "Invalid API key" });
         }
         // Fallback: probe /embeddings with a common test model — many providers lack /models
-        const embedRes = await fetch(`${baseUrl}/embeddings`, {
+        const embedRes = await customProviderFetch(`${baseUrl}/embeddings`, {
           method: "POST",
           headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          providerSpecificData: nodeHdr,
           body: JSON.stringify({ model: "test", input: "ping" }),
         });
         // 401/403 = bad key; anything else (including 400 "model not found") means key works
@@ -158,7 +163,7 @@ export async function POST(request) {
         const messagesUrl = `${normalizedBase}/v1/messages`;
         const model = node.defaultModel || "claude-3-haiku-20240307";
 
-        const res = await fetch(messagesUrl, {
+        const res = await customProviderFetch(messagesUrl, {
           method: "POST",
           headers: {
             "x-api-key": apiKey,
@@ -166,6 +171,7 @@ export async function POST(request) {
             "content-type": "application/json",
             "Authorization": `Bearer ${apiKey}`,
           },
+          providerSpecificData: customHeadersFrom(node),
           body: JSON.stringify({
             model,
             max_tokens: 1,

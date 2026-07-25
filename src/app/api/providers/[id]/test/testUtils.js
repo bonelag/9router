@@ -3,7 +3,7 @@ import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { testProxyUrl } from "@/lib/network/proxyTest";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 import { getDefaultModel } from "open-sse/config/providerModels.js";
-import { applyCustomHeaders } from "open-sse/utils/customHeaders.js";
+import { customProviderFetch } from "open-sse/utils/customHeaders.js";
 import { resolveOllamaLocalHost, PROVIDERS } from "open-sse/config/providers.js";
 import {
   refreshProviderCredentials,
@@ -491,12 +491,16 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
     const modelsBase = connection.providerSpecificData?.baseUrl;
     if (!modelsBase) return { valid: false, error: "Missing base URL" };
     try {
-      const baseHeaders = { "Authorization": `Bearer ${connection.apiKey}` };
-      applyCustomHeaders(baseHeaders, connection.providerSpecificData);
-
-      const res = await fetchWithConnectionProxy(`${modelsBase.replace(/\/$/, "")}/models`, {
-        headers: baseHeaders,
-      }, effectiveProxy);
+      const res = await customProviderFetch(`${modelsBase.replace(/\/$/, "")}/models`, {
+        headers: { "Authorization": `Bearer ${connection.apiKey}` },
+        providerSpecificData: connection.providerSpecificData,
+        proxyOptions: effectiveProxy ? {
+          connectionProxyEnabled: effectiveProxy.connectionProxyEnabled === true,
+          connectionProxyUrl: effectiveProxy.connectionProxyUrl || "",
+          connectionNoProxy: effectiveProxy.connectionNoProxy || "",
+          vercelRelayUrl: effectiveProxy.vercelRelayUrl || "",
+        } : null,
+      });
       return { valid: res.ok, error: res.ok ? null : "Invalid API key or base URL" };
     } catch (err) {
       return { valid: false, error: err.message };
@@ -512,23 +516,27 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
       const messagesUrl = `${modelsBase}/v1/messages`;
       const model = connection.defaultModel || "claude-3-haiku-20240307";
 
-      const baseHeaders = {
-        "x-api-key": connection.apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-        "Authorization": `Bearer ${connection.apiKey}`,
-      };
-      applyCustomHeaders(baseHeaders, connection.providerSpecificData);
-
-      const res = await fetchWithConnectionProxy(messagesUrl, {
+      const res = await customProviderFetch(messagesUrl, {
         method: "POST",
-        headers: baseHeaders,
+        headers: {
+          "x-api-key": connection.apiKey,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+          "Authorization": `Bearer ${connection.apiKey}`,
+        },
+        providerSpecificData: connection.providerSpecificData,
         body: JSON.stringify({
           model,
           max_tokens: 1,
           messages: [{ role: "user", content: "test" }],
         }),
-      }, effectiveProxy);
+        proxyOptions: effectiveProxy ? {
+          connectionProxyEnabled: effectiveProxy.connectionProxyEnabled === true,
+          connectionProxyUrl: effectiveProxy.connectionProxyUrl || "",
+          connectionNoProxy: effectiveProxy.connectionNoProxy || "",
+          vercelRelayUrl: effectiveProxy.vercelRelayUrl || "",
+        } : null,
+      });
       // 400/529 still confirms key accepted; only 401/403 = bad key
       const valid = res.status !== 401 && res.status !== 403;
       return { valid, error: valid ? null : "Invalid API key or base URL" };

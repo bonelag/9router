@@ -3,6 +3,16 @@ import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { getExecutor } from "../executors/index.js";
 import { refreshWithRetry } from "../services/tokenRefresh.js";
 import { getEmbeddingAdapter } from "./embeddingProviders/index.js";
+import { hasCustomHeaders } from "../utils/customHeaders.js";
+import { proxyAwareFetch } from "../utils/proxyFetch.js";
+
+/** Use undici when custom headers (esp. User-Agent) are set — Next.js fetch overwrites UA. */
+async function embeddingsFetch(url, options, credentials) {
+  if (hasCustomHeaders(credentials?.providerSpecificData)) {
+    return proxyAwareFetch(url, { ...options, bypassNextjsFetch: true });
+  }
+  return fetch(url, options);
+}
 
 /**
  * Core embeddings handler — orchestrator only. Provider-specific URL/headers/body/normalize
@@ -50,11 +60,11 @@ export async function handleEmbeddingsCore({
 
   let providerResponse;
   try {
-    providerResponse = await fetch(url, {
+    providerResponse = await embeddingsFetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify(requestBody),
-    });
+    }, credentials);
   } catch (error) {
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
     log?.debug?.("EMBEDDINGS", `Fetch error: ${errMsg}`);
@@ -82,11 +92,11 @@ export async function handleEmbeddingsCore({
       try {
         const retryHeaders = adapter.buildHeaders(credentials, ctx);
         const retryUrl = adapter.buildUrl(model, credentials, ctx);
-        providerResponse = await fetch(retryUrl, {
+        providerResponse = await embeddingsFetch(retryUrl, {
           method: "POST",
           headers: retryHeaders,
           body: JSON.stringify(requestBody),
-        });
+        }, credentials);
       } catch {
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`);
       }

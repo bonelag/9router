@@ -11,6 +11,26 @@ import { resolveQoderModels } from "open-sse/services/qoderModels.js";
 import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { resolveCursorModels } from "open-sse/services/cursorModels.js";
+import { customProviderFetch } from "open-sse/utils/customHeaders.js";
+
+/**
+ * Fetch /models for openai-/anthropic-compatible custom nodes.
+ * Always applies node custom headers and bypasses Next.js User-Agent override.
+ */
+async function fetchCompatibleProviderModels(url, baseHeaders, connection) {
+  const proxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
+  return customProviderFetch(url, {
+    method: "GET",
+    headers: baseHeaders,
+    providerSpecificData: connection.providerSpecificData,
+    proxyOptions: {
+      connectionProxyEnabled: proxy.connectionProxyEnabled === true,
+      connectionProxyUrl: proxy.connectionProxyUrl || "",
+      connectionNoProxy: proxy.connectionNoProxy || "",
+      vercelRelayUrl: proxy.vercelRelayUrl || "",
+    },
+  });
+}
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
@@ -473,13 +493,10 @@ export async function GET(request, { params }) {
         return NextResponse.json({ error: "No base URL configured for OpenAI compatible provider" }, { status: 400 });
       }
       const url = `${baseUrl.replace(/\/$/, "")}/models`;
-      const response = await fetch(url, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${connection.apiKey}`,
-        },
-      });
+      const response = await fetchCompatibleProviderModels(url, {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${connection.apiKey}`,
+      }, connection);
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -512,15 +529,12 @@ export async function GET(request, { params }) {
       }
 
       const url = `${baseUrl}/models`;
-      const response = await fetch(url, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": connection.apiKey,
-          "anthropic-version": "2023-06-01",
-          "Authorization": `Bearer ${connection.apiKey}`
-        },
-      });
+      const response = await fetchCompatibleProviderModels(url, {
+        "Content-Type": "application/json",
+        "x-api-key": connection.apiKey,
+        "anthropic-version": "2023-06-01",
+        "Authorization": `Bearer ${connection.apiKey}`,
+      }, connection);
 
       if (!response.ok) {
         const errorText = await response.text();

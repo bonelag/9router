@@ -17,6 +17,7 @@ import { resolveCursorModels } from "open-sse/services/cursorModels.js";
 import { updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { capabilitiesFromServiceKind, getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
+import { customProviderFetch } from "open-sse/utils/customHeaders.js";
 
 // Per-provider live model resolvers. Each receives a connection record and
 // returns { models: [{ id, name? }, ...] } | null on failure.
@@ -178,10 +179,11 @@ async function fetchCompatibleModelIds(connection) {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
-    const response = await fetch(url, {
+    // Always apply node custom headers; bypass Next.js UA override
+    const response = await customProviderFetch(url, {
       method: "GET",
       headers: { ...headers, [INTERNAL_MODELS_FETCH_HEADER]: "1" },
-      cache: "no-store",
+      providerSpecificData: connection.providerSpecificData,
       signal: controller.signal,
     });
     clearTimeout(timeoutId);

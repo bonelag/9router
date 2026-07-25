@@ -162,6 +162,8 @@ export async function POST(request) {
         prefix: node.prefix,
         baseUrl: node.baseUrl,
         nodeName: node.name,
+        headersEnabled: node.headersEnabled,
+        customHeaders: node.customHeaders,
       };
     }
 

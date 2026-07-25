@@ -62,6 +62,8 @@ export async function PUT(request, { params }) {
 
     const updated = await updateProviderNode(id, updates);
 
+    // Keep every connection in sync with node headers so all outbound paths
+    // (chat / models / test / embeddings) always see the latest custom headers.
     const connections = await getProviderConnections({ provider: id });
     await Promise.all(connections.map((connection) => (
       updateProviderConnection(connection.id, {
@@ -71,8 +73,8 @@ export async function PUT(request, { params }) {
           apiType: node.type === "openai-compatible" ? apiType : undefined,
           baseUrl: sanitizedBaseUrl,
           nodeName: updated.name,
-          headersEnabled: updated.headersEnabled,
-          customHeaders: updated.customHeaders,
+          headersEnabled: updated.headersEnabled === true,
+          customHeaders: Array.isArray(updated.customHeaders) ? updated.customHeaders : [],
         }
       })
     )));

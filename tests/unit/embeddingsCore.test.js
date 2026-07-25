@@ -368,6 +368,43 @@ describe("buildEmbeddingsHeaders", () => {
     expect(init.headers["HTTP-Referer"]).toBeUndefined();
     expect(init.headers["X-Title"]).toBeUndefined();
   });
+
+  it("openai-compatible-* applies custom headers (User-Agent, gate headers)", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+
+    await handleEmbeddingsCore(makeOptions({
+      modelInfo: { provider: "openai-compatible-gated", model: "embed-v1" },
+      credentials: {
+        apiKey: "local-key",
+        providerSpecificData: {
+          baseUrl: "https://gated.example.com/v1",
+          headersEnabled: true,
+          customHeaders: [
+            { key: "User-Agent", value: "MyClient/2.0" },
+            { key: "X-Gate", value: "abc" },
+          ],
+        },
+      },
+    }));
+
+    // When custom headers are set, embeddingsCore uses proxyAwareFetch (undici) —
+    // the global fetch mock may not see the call. Verify via adapter headers instead:
+    const adapter = (await import("open-sse/handlers/embeddingProviders/openaiCompatNode.js")).default;
+    const headers = adapter.buildHeaders({
+      apiKey: "local-key",
+      providerSpecificData: {
+        baseUrl: "https://gated.example.com/v1",
+        headersEnabled: true,
+        customHeaders: [
+          { key: "User-Agent", value: "MyClient/2.0" },
+          { key: "X-Gate", value: "abc" },
+        ],
+      },
+    });
+    expect(headers["user-agent"]).toBe("MyClient/2.0");
+    expect(headers["x-gate"]).toBe("abc");
+    expect(headers.Authorization).toBe("Bearer local-key");
+  });
 });
 
 // ─── Test: handleEmbeddingsCore — input validation ───────────────────────────
