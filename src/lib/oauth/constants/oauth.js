@@ -89,12 +89,18 @@ export const CURSOR_CONFIG = {
   },
 };
 
-// Kimi Coding OAuth Configuration (Device Code Flow)
-// clientId uses env override — dynamic, not stored in registry
-export const KIMI_CODING_CONFIG = {
-  ...PROVIDER_OAUTH["kimi-coding"],
-  clientId: process.env.KIMI_CODING_OAUTH_CLIENT_ID || REGISTRY_PROVIDERS["kimi-coding"]?.clientId,
+// Kimi Code OAuth (Device Code Flow) — merged into provider id `kimi` (dual auth)
+// clientId: registry first, env override for forks
+export const KIMI_CONFIG = {
+  ...PROVIDER_OAUTH["kimi"],
+  clientId:
+    process.env.KIMI_CODING_OAUTH_CLIENT_ID ||
+    process.env.KIMI_OAUTH_CLIENT_ID ||
+    REGISTRY_PROVIDERS["kimi"]?.clientId ||
+    PROVIDER_OAUTH["kimi"]?.clientId,
 };
+// Back-compat alias for any remaining KIMI_CODING_CONFIG imports
+export const KIMI_CODING_CONFIG = KIMI_CONFIG;
 
 // KiloCode OAuth Configuration (Custom Device Auth Flow)
 export const KILOCODE_CONFIG = { ...PROVIDER_OAUTH["kilocode"] };
@@ -114,6 +120,10 @@ export const CODEBUDDY_CONFIG = { ...PROVIDER_OAUTH["codebuddy-cn"] };
 // Kimchi OAuth Configuration (Browser token callback flow)
 export const KIMCHI_CONFIG = { ...PROVIDER_OAUTH["kimchi"] };
 
+// Grok CLI / Grok Build OAuth Configuration (Device Code Flow)
+// Endpoint: cli-chat-proxy.grok.com — same client_id as xai, different flow + scopes
+export const GROK_CLI_CONFIG = { ...PROVIDER_OAUTH["grok-cli"] };
+
 // OAuth timeout (5 minutes)
 export const OAUTH_TIMEOUT = 300000;
 
@@ -130,11 +140,13 @@ export const PROVIDERS = {
   GITHUB: "github",
   KIRO: "kiro",
   CURSOR: "cursor",
-  KIMI_CODING: "kimi-coding",
+  KIMI: "kimi",
+  KIMI_CODING: "kimi",
   KILOCODE: "kilocode",
   CLINE: "cline",
   CLINEPASS: "clinepass",
   GITLAB: "gitlab",
   CODEBUDDY: "codebuddy-cn",
   KIMCHI: "kimchi",
+  GROK_CLI: "grok-cli",
 };
