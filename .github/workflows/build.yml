@@ -12,8 +12,8 @@ concurrency:
 
 jobs:
   release:
-    name: Tag and release current version
-    runs-on: ubuntu-latest
+    name: Build, tag, and release current version
+    runs-on: windows-latest
 
     steps:
       - name: Check out repository
@@ -21,14 +21,28 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            cli/package-lock.json
+
       - name: Detect 9Router version
         id: version
         shell: bash
         run: |
           VERSION="$(node -p "require('./package.json').version")"
+          CLI_VERSION="$(node -p "require('./cli/package.json').version")"
 
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error file=package.json::Invalid 9Router version: $VERSION"
+            exit 1
+          fi
+          if [[ "$CLI_VERSION" != "$VERSION" ]]; then
+            echo "::error::Version mismatch: package.json is $VERSION but cli/package.json is $CLI_VERSION"
             exit 1
           fi
 
@@ -36,6 +50,158 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Detected 9Router $VERSION ($TAG)"
+
+      - name: Validate installer scripts
+        shell: bash
+        run: |
+          bash -n scripts/install.sh
+          powershell.exe -NoLogo -NoProfile -Command '
+            $source = Get-Content -Raw -LiteralPath "scripts/install.bat"
+            $marker = "# POWERSHELL_INSTALLER"
+            $offset = $source.LastIndexOf($marker)
+            if ($offset -lt 0) { throw "Embedded PowerShell installer was not found" }
+            [scriptblock]::Create($source.Substring($offset + $marker.Length)) | Out-Null
+          '
+
+      - name: Build product
+        shell: cmd
+        run: call build.bat
+
+      - name: Package product contents
+        id: package
+        shell: powershell
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $productDir = Join-Path $env:GITHUB_WORKSPACE "product"
+          $assetName = "9router_$env:VERSION.zip"
+          $archivePath = Join-Path $env:GITHUB_WORKSPACE $assetName
+
+          if (-not (Test-Path -LiteralPath (Join-Path $productDir "cli.js"))) {
+            throw "Product build is missing product\cli.js"
+          }
+          $requiredProductPaths = @(
+            "node_modules\node-machine-id\package.json",
+            "app\server.js",
+            "app\node_modules\sql.js\dist\sql-wasm.wasm"
+          )
+          foreach ($requiredPath in $requiredProductPaths) {
+            if (-not (Test-Path -LiteralPath (Join-Path $productDir $requiredPath))) {
+              throw "Portable product is missing $requiredPath"
+            }
+          }
+
+          Compress-Archive `
+            -Path (Join-Path $productDir "*") `
+            -DestinationPath $archivePath `
+            -CompressionLevel Optimal `
+            -Force
+
+          $verifyDir = Join-Path $env:RUNNER_TEMP "9router-package-check"
+          if (Test-Path -LiteralPath $verifyDir) {
+            Remove-Item -LiteralPath $verifyDir -Recurse -Force
+          }
+          Expand-Archive -LiteralPath $archivePath -DestinationPath $verifyDir
+
+          if (Test-Path -LiteralPath (Join-Path $verifyDir "product")) {
+            throw "Archive must contain product contents, not the product directory"
+          }
+          if (-not (Test-Path -LiteralPath (Join-Path $verifyDir "cli.js"))) {
+            throw "Archive root is missing cli.js"
+          }
+
+          "asset_name=$assetName" >> $env:GITHUB_OUTPUT
+          "archive=$archivePath" >> $env:GITHUB_OUTPUT
+          "verify_dir=$verifyDir" >> $env:GITHUB_OUTPUT
+          Write-Output "Created $archivePath"
+
+      - name: Smoke-test portable product
+        shell: powershell
+        env:
+          PACKAGE_DIR: ${{ steps.package.outputs.verify_dir }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          Push-Location $env:PACKAGE_DIR
+          try {
+            node -e "const pkg=require('./package.json'); for (const name of Object.keys(pkg.dependencies || {})) require.resolve(name, { paths: [process.cwd()] }); console.log('All CLI production dependencies resolve')"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Portable CLI dependencies could not be resolved"
+            }
+          } finally {
+            Pop-Location
+          }
+
+          $listener = [System.Net.Sockets.TcpListener]::new(
+            [System.Net.IPAddress]::Loopback,
+            0
+          )
+          $listener.Start()
+          $port = $listener.LocalEndpoint.Port
+          $listener.Stop()
+
+          $dataDir = Join-Path $env:RUNNER_TEMP "9router-smoke-data"
+          $stdout = Join-Path $env:RUNNER_TEMP "9router-smoke.stdout.log"
+          $stderr = Join-Path $env:RUNNER_TEMP "9router-smoke.stderr.log"
+          $env:DATA_DIR = $dataDir
+          $env:NODE_ENV = "production"
+          $env:NODE_PATH = ""
+
+          $launcher = Start-Process `
+            -FilePath "node" `
+            -ArgumentList @(
+              "cli.js",
+              "--port", $port,
+              "--host", "127.0.0.1",
+              "--no-browser",
+              "--skip-update",
+              "--log"
+            ) `
+            -WorkingDirectory $env:PACKAGE_DIR `
+            -RedirectStandardOutput $stdout `
+            -RedirectStandardError $stderr `
+            -WindowStyle Hidden `
+            -PassThru
+
+          try {
+            $ready = $false
+            $deadline = (Get-Date).AddMinutes(2)
+            while ((Get-Date) -lt $deadline) {
+              if ($launcher.HasExited) {
+                throw "node cli.js exited before the server became ready"
+              }
+              try {
+                $versionResponse = Invoke-RestMethod `
+                  -Uri "http://127.0.0.1:$port/api/version" `
+                  -TimeoutSec 5
+                if ($versionResponse.currentVersion -eq $env:VERSION) {
+                  $ready = $true
+                  break
+                }
+              } catch {
+                Start-Sleep -Seconds 2
+              }
+            }
+
+            if (-not $ready) {
+              throw "Portable product did not become healthy within 2 minutes"
+            }
+            Write-Output "Portable product started successfully with node cli.js"
+          } finally {
+            Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+              Select-Object -ExpandProperty OwningProcess -Unique |
+              ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
+            if (-not $launcher.HasExited) {
+              Stop-Process -Id $launcher.Id -Force -ErrorAction SilentlyContinue
+            }
+            Write-Output "--- cli stdout ---"
+            if (Test-Path -LiteralPath $stdout) {
+              Get-Content -LiteralPath $stdout
+            }
+            Write-Output "--- cli stderr ---"
+            if (Test-Path -LiteralPath $stderr) {
+              Get-Content -LiteralPath $stderr
+            }
+          }
 
       - name: Create version tag
         shell: bash
@@ -65,7 +231,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          REPOSITORY: ${{ github.repository }}
+          ASSET_NAME: ${{ steps.package.outputs.asset_name }}
+          ARCHIVE: ${{ steps.package.outputs.archive }}
         run: |
+          cp scripts/install.bat install.bat
+          tr -d '\r' < scripts/install.sh > install.sh
+
           if RELEASE_URL="$(gh release view "$TAG" --json url --jq '.url' 2>/dev/null)"; then
             echo "Release already exists: $RELEASE_URL"
           else
@@ -76,6 +249,63 @@ jobs:
             echo "Created release: $RELEASE_URL"
           fi
 
+          gh release upload "$TAG" \
+            "$ARCHIVE#9Router $VERSION portable product" \
+            "install.bat#Windows one-click installer" \
+            "install.sh#Linux and macOS one-click installer" \
+            --clobber
+          echo "Uploaded release assets: $ASSET_NAME, install.bat, install.sh"
+
+          INSTALL_TEMPLATE="$(mktemp)"
+          INSTALL_NOTES="$(mktemp)"
+          CURRENT_BODY="$(mktemp)"
+          CLEAN_BODY="$(mktemp)"
+          FINAL_BODY="$(mktemp)"
+
+          cat > "$INSTALL_TEMPLATE" <<'EOF'
+          <!-- 9router-one-click:start -->
+          ---
+
+          ## ⚡ One-click install / update
+
+          The installer finds the current 9Router directory containing `cli.js`, downloads this release, validates it, and replaces the existing installation.
+
+          ### 🪟 Windows
+
+          ```powershell
+          powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:NINEROUTER_REPO='__REPOSITORY__'; $file=Join-Path $env:TEMP '9router-install.bat'; Invoke-WebRequest ('https://github.com/'+$env:NINEROUTER_REPO+'/releases/latest/download/install.bat') -OutFile $file; & $file"
+          ```
+
+          ### 🐧 Linux / 🍎 macOS
+
+          ```bash
+          curl -fsSL "https://github.com/__REPOSITORY__/releases/latest/download/install.sh" | NINEROUTER_REPO="__REPOSITORY__" sh
+          ```
+
+          > Requires Node.js 20.9 or newer. The installer preserves user data and replaces only the installed 9Router program files.
+
+          ### ↩️ Restore the official npm version
+
+          `npm i -g 9router@latest`
+          <!-- 9router-one-click:end -->
+          EOF
+
+          sed "s|__REPOSITORY__|$REPOSITORY|g" "$INSTALL_TEMPLATE" > "$INSTALL_NOTES"
+          gh release view "$TAG" --json body --jq '.body // ""' > "$CURRENT_BODY"
+          awk '
+            /<!-- 9router-one-click:start -->/ { skip = 1; next }
+            /<!-- 9router-one-click:end -->/ { skip = 0; next }
+            !skip { print }
+          ' "$CURRENT_BODY" > "$CLEAN_BODY"
+
+          if [[ -s "$CLEAN_BODY" ]]; then
+            cat "$CLEAN_BODY" > "$FINAL_BODY"
+            printf '\n\n' >> "$FINAL_BODY"
+          fi
+          cat "$INSTALL_NOTES" >> "$FINAL_BODY"
+          gh release edit "$TAG" --notes-file "$FINAL_BODY"
+          echo "Updated release description with one-click install commands."
+
           echo "url=$RELEASE_URL" >> "$GITHUB_OUTPUT"
 
       - name: Write release summary
@@ -84,11 +314,13 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           TAG: ${{ steps.version.outputs.tag }}
           RELEASE_URL: ${{ steps.release.outputs.url }}
+          ASSET_NAME: ${{ steps.package.outputs.asset_name }}
         run: |
           {
             echo "## 9Router $VERSION"
             echo
             echo "- Tag: \`$TAG\`"
             echo "- Release: $RELEASE_URL"
+            echo "- Product: \`$ASSET_NAME\`"
             echo "- Commit: \`$GITHUB_SHA\`"
           } >> "$GITHUB_STEP_SUMMARY"

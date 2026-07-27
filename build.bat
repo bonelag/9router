@@ -51,7 +51,19 @@ call npm --prefix cli run build || goto :fail
 REM ---- copy to product -----------------------------------------------
 echo Copying built files to product/ directory...
 if not exist "%ROOT%\product" mkdir "%ROOT%\product"
-powershell -Command "Remove-Item -Recurse -Force '%ROOT%\product\*' -ErrorAction SilentlyContinue; Copy-Item -Path '%ROOT%\cli\cli.js', '%ROOT%\cli\package.json', '%ROOT%\cli\README.md', '%ROOT%\cli\LICENSE' -Destination '%ROOT%\product\' -Force; Copy-Item -Path '%ROOT%\cli\src', '%ROOT%\cli\hooks', '%ROOT%\cli\app' -Destination '%ROOT%\product\' -Recurse -Container -Force" || goto :fail
+powershell -Command "Remove-Item -Recurse -Force '%ROOT%\product\*' -ErrorAction SilentlyContinue; Copy-Item -Path '%ROOT%\cli\cli.js', '%ROOT%\cli\package.json', '%ROOT%\cli\package-lock.json', '%ROOT%\cli\README.md', '%ROOT%\cli\LICENSE' -Destination '%ROOT%\product\' -Force; Copy-Item -Path '%ROOT%\cli\src', '%ROOT%\cli\hooks', '%ROOT%\cli\app' -Destination '%ROOT%\product\' -Recurse -Container -Force" || goto :fail
+
+REM ---- install CLI production dependencies into the portable product -------
+REM app\node_modules belongs to the Next.js standalone server. The CLI itself
+REM also needs product\node_modules (for example node-machine-id in Terminal UI).
+echo Installing portable CLI runtime dependencies...
+pushd "%ROOT%\product"
+call npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+if errorlevel 1 (
+  popd
+  goto :fail
+)
+popd
 
 echo.
 echo CLI package successfully built and copied to "%ROOT%\product".
