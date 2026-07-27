@@ -175,26 +175,47 @@ if (fs.existsSync(customServerSrc)) {
 // Windows EBUSY during global CLI updates. node:sqlite (Node ≥22.5) is also
 // available as a no-install middle tier.
 console.log("3️⃣ b Configuring SQLite drivers...");
-function ensureModuleInBundle(pkg) {
+function ensureModuleInBundle(pkg, requiredFiles = []) {
   const dest = path.join(cliAppDir, "node_modules", pkg);
-  if (fs.existsSync(dest)) {
+  const isComplete = (dir) =>
+    fs.existsSync(dir) &&
+    requiredFiles.every((file) => fs.existsSync(path.join(dir, file)));
+
+  if (isComplete(dest)) {
     console.log(`✅ ${pkg} already bundled`);
     return;
   }
+
   const candidates = [
     path.join(appDir, "node_modules", pkg),
     path.join(rootDir, "node_modules", pkg),
   ];
-  const src = candidates.find((p) => fs.existsSync(p));
+  const src = candidates.find(isComplete);
   if (!src) {
-    console.warn(`⚠️  ${pkg} not found locally — bundle will rely on node:sqlite or runtime install`);
-    return;
+    console.error(`❌ Complete ${pkg} package not found locally`);
+    for (const file of requiredFiles) {
+      console.error(`   Required: ${pkg}/${file}`);
+    }
+    process.exit(1);
+  }
+
+  // Next.js tracing may create a partial package directory (for sql.js this
+  // included sql-wasm.js but omitted sql-wasm.wasm). Replace that partial copy
+  // with the complete installed package rather than treating the directory as
+  // proof that the runtime dependency is bundled.
+  if (fs.existsSync(dest)) {
+    fs.rmSync(dest, { recursive: true, force: true });
   }
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   copyRecursive(src, dest);
+
+  if (!isComplete(dest)) {
+    console.error(`❌ Failed to bundle complete ${pkg} package`);
+    process.exit(1);
+  }
   console.log(`✅ Bundled ${pkg}`);
 }
-ensureModuleInBundle("sql.js");
+ensureModuleInBundle("sql.js", ["dist/sql-wasm.wasm"]);
 const betterDir = path.join(cliAppDir, "node_modules", "better-sqlite3");
 if (fs.existsSync(betterDir)) {
   fs.rmSync(betterDir, { recursive: true, force: true });
