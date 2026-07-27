@@ -1,0 +1,94 @@
+name: Create 9Router Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: create-9router-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Tag and release current version
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect 9Router version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error file=package.json::Invalid 9Router version: $VERSION"
+            exit 1
+          fi
+
+          TAG="v${VERSION}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Detected 9Router $VERSION ($TAG)"
+
+      - name: Create version tag
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if git rev-parse --verify --quiet "refs/tags/$TAG" >/dev/null; then
+            TAG_COMMIT="$(git rev-list -n 1 "$TAG")"
+            if [[ "$TAG_COMMIT" != "$GITHUB_SHA" ]]; then
+              echo "::error::Tag $TAG already points to $TAG_COMMIT, not $GITHUB_SHA. Bump package.json.version before releasing."
+              exit 1
+            fi
+
+            echo "Tag $TAG already points to this commit; reusing it."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --annotate "$TAG" "$GITHUB_SHA" --message "9Router $VERSION"
+          git push origin "$TAG"
+
+      - name: Create GitHub Release
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if RELEASE_URL="$(gh release view "$TAG" --json url --jq '.url' 2>/dev/null)"; then
+            echo "Release already exists: $RELEASE_URL"
+          else
+            RELEASE_URL="$(gh release create "$TAG" \
+              --verify-tag \
+              --title "9Router $TAG" \
+              --generate-notes)"
+            echo "Created release: $RELEASE_URL"
+          fi
+
+          echo "url=$RELEASE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Write release summary
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_URL: ${{ steps.release.outputs.url }}
+        run: |
+          {
+            echo "## 9Router $VERSION"
+            echo
+            echo "- Tag: \`$TAG\`"
+            echo "- Release: $RELEASE_URL"
+            echo "- Commit: \`$GITHUB_SHA\`"
+          } >> "$GITHUB_STEP_SUMMARY"
