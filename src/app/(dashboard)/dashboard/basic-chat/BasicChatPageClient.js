@@ -2,6 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button } from "@/shared/components";
+import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import {
+  appendAssistantVersion,
+  getActiveAssistantVersionIndex,
+  getAssistantVersions,
+  getRegenerationContext,
+  patchActiveAssistantVersion,
+  selectAssistantVersion,
+} from "@/shared/utils/basicChatMessages";
 import { getModelsByProviderId } from "@/shared/constants/models";
 import { AI_PROVIDERS, isAnthropicCompatibleProvider, isOpenAICompatibleProvider } from "@/shared/constants/providers";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
@@ -388,12 +397,30 @@ function getProviderDisplayName(providerId, connection) {
   return humanize(providerId);
 }
 
+function getModelDisplayId(connection, modelId, requestModel) {
+  const providerId = connection?.provider || connection?.id || "";
+  const isCompatible = isOpenAICompatibleProvider(providerId) || isAnthropicCompatibleProvider(providerId);
+  const providerPrefix = textValue(connection?.providerSpecificData?.prefix).trim();
+  if (!isCompatible || !providerPrefix) return requestModel;
+
+  let bareId = textValue(modelId).trim();
+  for (const prefix of [providerId, providerPrefix]) {
+    if (prefix && bareId.startsWith(`${prefix}/`)) {
+      bareId = bareId.slice(prefix.length + 1);
+      break;
+    }
+  }
+
+  return bareId ? `${providerPrefix}/${bareId}` : requestModel;
+}
+
 function normalizeStaticModel(model, connection) {
   if (!model?.id) return null;
   const requestModel = `${connection.provider}/${model.id}`;
   return {
     id: requestModel,
     requestModel,
+    displayModel: getModelDisplayId(connection, model.id, requestModel),
     name: model.name || model.id,
     providerId: connection.provider,
     providerName: getProviderLabel(connection),
@@ -421,6 +448,7 @@ function normalizeLiveModel(model, connection) {
   return {
     id: requestModel,
     requestModel,
+    displayModel: getModelDisplayId(connection, rawId, requestModel),
     name: displayName,
     providerId: connection.provider,
     providerName: getProviderLabel(connection),
@@ -453,6 +481,7 @@ function normalizeAliasModel(aliasName, fullModel, connection) {
   return {
     id: requestModel,
     requestModel,
+    displayModel: getModelDisplayId(connection, bareId, requestModel),
     name: aliasName || bareId,
     providerId,
     providerName: getProviderLabel(connection),
@@ -470,6 +499,7 @@ function normalizeCustomModel(model, connection) {
   return {
     id: requestModel,
     requestModel,
+    displayModel: getModelDisplayId(connection, bareId, requestModel),
     name: model.name || bareId,
     providerId,
     providerName: getProviderLabel(connection),
@@ -543,6 +573,7 @@ export default function BasicChatPageClient() {
     if (typeof window === "undefined") return "chat";
     return globalThis.localStorage.getItem(STORAGE_KEYS.mode) || "chat";
   });
+  const { copied, copy } = useCopyToClipboard();
   // True when the user picks the mode manually — suppresses auto-switch on model change.
   const modeManualRef = useRef(false);
   const fileInputRef = useRef(null);
@@ -808,7 +839,7 @@ export default function BasicChatPageClient() {
           ? group.models
           : group.models.filter((model) =>
               model.name.toLowerCase().includes(query) ||
-              String(model.requestModel || model.id).toLowerCase().includes(query));
+              String(model.displayModel || model.requestModel || model.id).toLowerCase().includes(query));
         return { ...group, models };
       })
       .filter((group) => group.models.length > 0);
@@ -1053,15 +1084,13 @@ export default function BasicChatPageClient() {
     }));
   };
 
-  const sendMessage = async () => {
+  const sendMessage = async ({ retryMessageId = "" } = {}) => {
     const model = activeModel || activeProviderGroup?.models?.[0] || null;
     if (!model) return;
 
-    const userText = draft.trim();
-    if (!userText && attachments.length === 0) return;
-
     let sessionId = activeSessionId;
     let session = sessions.find((item) => item.id === sessionId);
+    if (retryMessageId && !session) return;
     if (!session) {
       session = ensureSessionForModel(model);
       if (!session) return;
@@ -1070,11 +1099,24 @@ export default function BasicChatPageClient() {
       setActiveSessionId(sessionId);
     }
 
-    const userMessage = {
+    const retryContext = retryMessageId
+      ? getRegenerationContext(session.messages, retryMessageId)
+      : null;
+    if (retryMessageId && !retryContext) return;
+
+    const userText = retryContext
+      ? textValue(retryContext.userMessage.content).trim()
+      : draft.trim();
+    const userAttachments = retryContext
+      ? (retryContext.userMessage.attachments || [])
+      : attachments;
+    if (!userText && userAttachments.length === 0) return;
+
+    const userMessage = retryContext ? null : {
       id: createId(),
       role: "user",
       content: userText,
-      attachments: attachments.map((attachment) => ({
+      attachments: userAttachments.map((attachment) => ({
         id: attachment.id,
         name: attachment.name,
         type: attachment.type,
@@ -1083,16 +1125,27 @@ export default function BasicChatPageClient() {
       createdAt: new Date().toISOString(),
     };
 
-    const assistantMessageId = createId();
-    const assistantMessage = {
-      id: assistantMessageId,
-      role: "assistant",
+    const requestMode = retryContext?.assistantMessage?.mode
+      || (retryContext?.assistantMessage?.images?.length ? "image" : mode);
+
+    const assistantMessageId = retryContext?.assistantMessage?.id || createId();
+    const nextAssistantVersion = {
       content: "",
       createdAt: new Date().toISOString(),
       status: "streaming",
+      mode: requestMode,
     };
+    const assistantMessage = retryContext
+      ? appendAssistantVersion(retryContext.assistantMessage, nextAssistantVersion)
+      : {
+          id: assistantMessageId,
+          role: "assistant",
+          ...nextAssistantVersion,
+        };
 
-    const nextMessages = [...(session.messages || []), userMessage, assistantMessage];
+    const nextMessages = retryContext
+      ? [...retryContext.history, assistantMessage]
+      : [...(session.messages || []), userMessage, assistantMessage];
     setSessions((prev) => prev.map((item) => (item.id === sessionId ? {
       ...item,
       providerId: model.providerId,
@@ -1103,8 +1156,11 @@ export default function BasicChatPageClient() {
       updatedAt: new Date().toISOString(),
       title: item.title === "New chat" ? makeSessionTitle(userText) : item.title,
     } : item)));
-    setDraft("");
-    setAttachments([]);
+    if (!retryContext) {
+      setDraft("");
+      setAttachments([]);
+    }
+    setLoadError("");
     setIsSending(true);
     setStreamingMessageId(assistantMessageId);
     setStreamingText("");
@@ -1120,7 +1176,7 @@ export default function BasicChatPageClient() {
       }));
 
     // Image-generation mode: single JSON call to /v1/images/generations, render the image.
-    if (mode === "image") {
+    if (requestMode === "image") {
       try {
         const imageBody = {
           model: model.requestModel || model.id,
@@ -1148,7 +1204,11 @@ export default function BasicChatPageClient() {
 
         updateSession(sessionId, (currentSession) => ({
           ...currentSession,
-          messages: currentSession.messages.map((message) => (message.id === assistantMessageId ? { ...message, images, status: "done" } : message)),
+          messages: currentSession.messages.map((message) => (
+            message.id === assistantMessageId
+              ? patchActiveAssistantVersion(message, { images, status: "done" })
+              : message
+          )),
           updatedAt: new Date().toISOString(),
         }));
         finalizeSessionTitle(sessionId, userText);
@@ -1157,10 +1217,24 @@ export default function BasicChatPageClient() {
           const errorText = textValue(error?.message || error);
           updateSession(sessionId, (currentSession) => ({
             ...currentSession,
-            messages: currentSession.messages.map((message) => (message.id === assistantMessageId ? { ...message, content: `Error: ${errorText}`, status: "error" } : message)),
+            messages: currentSession.messages.map((message) => (
+              message.id === assistantMessageId
+                ? patchActiveAssistantVersion(message, { content: `Error: ${errorText}`, status: "error" })
+                : message
+            )),
             updatedAt: new Date().toISOString(),
           }));
           setLoadError(errorText || "Failed to generate image.");
+        } else {
+          updateSession(sessionId, (currentSession) => ({
+            ...currentSession,
+            messages: currentSession.messages.map((message) => (
+              message.id === assistantMessageId
+                ? patchActiveAssistantVersion(message, { status: "stopped" })
+                : message
+            )),
+            updatedAt: new Date().toISOString(),
+          }));
         }
       } finally {
         setIsSending(false);
@@ -1213,7 +1287,11 @@ export default function BasicChatPageClient() {
           ...currentSession,
           messages: currentSession.messages.map((message) => (
             message.id === assistantMessageId
-              ? { ...message, content: fallbackText, reasoning: fallbackReasoning, status: "done" }
+              ? patchActiveAssistantVersion(message, {
+                  content: fallbackText,
+                  reasoning: fallbackReasoning,
+                  status: "done",
+                })
               : message
           )),
           updatedAt: new Date().toISOString(),
@@ -1261,12 +1339,11 @@ export default function BasicChatPageClient() {
               ...currentSession,
               messages: currentSession.messages.map((message) => (
                 message.id === assistantMessageId
-                  ? {
-                      ...message,
+                  ? patchActiveAssistantVersion(message, {
                       content: assistantText || message.content,
                       reasoning: reasoningText || message.reasoning,
                       status: "streaming",
-                    }
+                    })
                   : message
               )),
               updatedAt: new Date().toISOString(),
@@ -1279,7 +1356,15 @@ export default function BasicChatPageClient() {
 
       updateSession(sessionId, (currentSession) => ({
         ...currentSession,
-        messages: currentSession.messages.map((message) => (message.id === assistantMessageId ? { ...message, content: assistantText || message.content, reasoning: reasoningText || message.reasoning, status: "done" } : message)),
+        messages: currentSession.messages.map((message) => (
+          message.id === assistantMessageId
+            ? patchActiveAssistantVersion(message, {
+                content: assistantText || message.content,
+                reasoning: reasoningText || message.reasoning,
+                status: "done",
+              })
+            : message
+        )),
         updatedAt: new Date().toISOString(),
       }));
       finalizeSessionTitle(sessionId, userText);
@@ -1288,10 +1373,27 @@ export default function BasicChatPageClient() {
         const errorText = textValue(error?.message || error);
         updateSession(sessionId, (currentSession) => ({
           ...currentSession,
-          messages: currentSession.messages.map((message) => (message.id === assistantMessageId ? { ...message, content: message.content || `Error: ${errorText}`, status: "error" } : message)),
+          messages: currentSession.messages.map((message) => (
+            message.id === assistantMessageId
+              ? patchActiveAssistantVersion(message, {
+                  content: message.content || `Error: ${errorText}`,
+                  status: "error",
+                })
+              : message
+          )),
           updatedAt: new Date().toISOString(),
         }));
         setLoadError(errorText || "Failed to send message.");
+      } else {
+        updateSession(sessionId, (currentSession) => ({
+          ...currentSession,
+          messages: currentSession.messages.map((message) => (
+            message.id === assistantMessageId
+              ? patchActiveAssistantVersion(message, { status: "stopped" })
+              : message
+          )),
+          updatedAt: new Date().toISOString(),
+        }));
       }
     } finally {
       setIsSending(false);
@@ -1309,8 +1411,23 @@ export default function BasicChatPageClient() {
     }
   };
 
+  const handleSelectAssistantVersion = (messageId, versionIndex) => {
+    if (!activeSessionId || isSending) return;
+    updateSession(activeSessionId, (session) => ({
+      ...session,
+      messages: session.messages.map((message) => (
+        message.id === messageId
+          ? selectAssistantVersion(message, versionIndex)
+          : message
+      )),
+      updatedAt: new Date().toISOString(),
+    }));
+  };
+
   const modelLabel = activeModel ? `${activeModel.name}` : "Select model";
-  const modelSubLabel = activeModel ? activeModel.requestModel : "Choose from connected providers";
+  const modelSubLabel = activeModel
+    ? activeModel.displayModel || activeModel.requestModel
+    : "Choose from connected providers";
   const activeThinkingLevel = THINKING_LEVELS.find((level) => level.value === thinkingLevel) || THINKING_LEVELS[2];
   const isImageMode = mode === "image";
   const selectMode = (nextMode) => {
@@ -1410,7 +1527,9 @@ export default function BasicChatPageClient() {
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
                                   <p className="truncate text-sm font-medium text-white">{model.name}</p>
-                                  <p className="truncate text-[11px] text-white/45">{model.requestModel}</p>
+                                  <p className="truncate text-[11px] text-white/45">
+                                    {model.displayModel || model.requestModel}
+                                  </p>
                                 </div>
                                 {isActive ? <span className="material-symbols-outlined text-[18px] text-blue-300">check_circle</span> : null}
                               </div>
@@ -1522,6 +1641,11 @@ export default function BasicChatPageClient() {
                   ? (textValue(message.reasoning) || (message.id === streamingMessageId ? streamingReasoning : ""))
                   : "";
                 const reasoningOpen = expandedReasoning[message.id] ?? isStreaming;
+                const assistantVersions = isAssistant ? getAssistantVersions(message) : [];
+                const activeVersionIndex = isAssistant
+                  ? getActiveAssistantVersionIndex(message)
+                  : -1;
+                const showAssistantActions = isAssistant && message.status !== "streaming";
 
                 return (
                   <div key={message.id} className={`flex w-full ${isUser ? "justify-end" : "justify-start"} mb-6`}>
@@ -1595,6 +1719,62 @@ export default function BasicChatPageClient() {
                               </div>
                             </div>
                           ))}
+                        </div>
+                      ) : null}
+
+                      {showAssistantActions ? (
+                        <div className="mt-2 inline-flex w-fit items-center justify-start gap-0.5 text-white/45">
+                          {assistantVersions.length > 1 ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleSelectAssistantVersion(message.id, activeVersionIndex - 1)}
+                                disabled={isSending || activeVersionIndex <= 0}
+                                className="flex size-8 shrink-0 items-center justify-center rounded-lg transition hover:bg-white/5 hover:text-white disabled:cursor-default disabled:opacity-25"
+                                title="Previous version"
+                                aria-label="Previous version"
+                              >
+                                <span className="material-symbols-outlined text-[20px]">chevron_left</span>
+                              </button>
+                              <span className="min-w-9 text-center text-xs font-medium tabular-nums text-white/65">
+                                {activeVersionIndex + 1}/{assistantVersions.length}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleSelectAssistantVersion(message.id, activeVersionIndex + 1)}
+                                disabled={isSending || activeVersionIndex >= assistantVersions.length - 1}
+                                className="flex size-8 shrink-0 items-center justify-center rounded-lg transition hover:bg-white/5 hover:text-white disabled:cursor-default disabled:opacity-25"
+                                title="Next version"
+                                aria-label="Next version"
+                              >
+                                <span className="material-symbols-outlined text-[20px]">chevron_right</span>
+                              </button>
+                              <span className="mx-1 h-4 w-px bg-white/10" aria-hidden="true" />
+                            </>
+                          ) : null}
+                          {content ? (
+                            <button
+                              type="button"
+                              onClick={() => copy(content, message.id)}
+                              className="flex size-8 shrink-0 items-center justify-center rounded-lg transition hover:bg-white/5 hover:text-white"
+                              title={copied === message.id ? "Copied" : "Copy Markdown"}
+                              aria-label={copied === message.id ? "Copied" : "Copy Markdown"}
+                            >
+                              <span className="material-symbols-outlined text-[17px]">
+                                {copied === message.id ? "check" : "content_copy"}
+                              </span>
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() => sendMessage({ retryMessageId: message.id })}
+                            disabled={isSending}
+                            className="flex size-8 shrink-0 items-center justify-center rounded-lg transition hover:bg-white/5 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                            title="Retry response"
+                            aria-label="Retry response"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">refresh</span>
+                          </button>
                         </div>
                       ) : null}
                     </div>
@@ -1714,7 +1894,7 @@ export default function BasicChatPageClient() {
                         <span className="material-symbols-outlined text-[16px]">stop</span>
                       </button>
                     ) : null}
-                    <button onClick={sendMessage} disabled={!canSend} className={`h-8 w-8 rounded-full flex items-center justify-center transition ${canSend ? 'bg-white text-black hover:opacity-90' : 'bg-white/10 text-white/30 cursor-not-allowed'}`}>
+                    <button onClick={() => sendMessage()} disabled={!canSend} className={`h-8 w-8 rounded-full flex items-center justify-center transition ${canSend ? 'bg-white text-black hover:opacity-90' : 'bg-white/10 text-white/30 cursor-not-allowed'}`}>
                       <span className="material-symbols-outlined text-[16px]">arrow_upward</span>
                     </button>
                   </div>

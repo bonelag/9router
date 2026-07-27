@@ -2,7 +2,11 @@
 
 import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
-import { Button, Badge, Input, Modal, Select, Toggle } from "@/shared/components";
+import { Button, Badge, Input, Modal, Select } from "@/shared/components";
+import {
+  buildCustomProviderHeaders,
+  splitCustomProviderHeaders,
+} from "@/shared/utils/customProviderHeaders";
 
 export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose, isAnthropic }) {
   const [formData, setFormData] = useState({
@@ -10,8 +14,8 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
     prefix: "",
     apiType: "chat",
     baseUrl: "https://api.openai.com/v1",
-    headersEnabled: false,
-    customHeaders: [{ key: "", value: "" }],
+    customUserAgent: "",
+    customHeaders: [],
   });
   const [saving, setSaving] = useState(false);
   const [checkKey, setCheckKey] = useState("");
@@ -21,15 +25,14 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
 
   useEffect(() => {
     if (node) {
+      const { customUserAgent, customHeaders } = splitCustomProviderHeaders(node.customHeaders);
       setFormData({
         name: node.name || "",
         prefix: node.prefix || "",
         apiType: node.apiType || "chat",
         baseUrl: node.baseUrl || (isAnthropic ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"),
-        headersEnabled: node.headersEnabled || false,
-        customHeaders: node.customHeaders && node.customHeaders.length > 0
-          ? node.customHeaders.map(h => ({ ...h }))
-          : [{ key: "", value: "" }],
+        customUserAgent,
+        customHeaders,
       });
     }
   }, [node, isAnthropic]);
@@ -43,16 +46,16 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
     if (!formData.name.trim() || !formData.prefix.trim() || !formData.baseUrl.trim()) return;
     setSaving(true);
     try {
-      const headersEnabled = formData.headersEnabled === true;
-      const customHeaders = headersEnabled && Array.isArray(formData.customHeaders)
-        ? formData.customHeaders.filter((h) => h.key && h.key.trim())
-        : [];
+      const customHeaders = buildCustomProviderHeaders(
+        formData.customUserAgent,
+        formData.customHeaders
+      );
 
       const payload = {
         name: formData.name,
         prefix: formData.prefix,
         baseUrl: formData.baseUrl,
-        headersEnabled,
+        headersEnabled: true,
         customHeaders,
       };
       if (!isAnthropic) {
@@ -67,10 +70,10 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
   const handleValidate = async () => {
     setValidating(true);
     try {
-      const headersEnabled = formData.headersEnabled === true;
-      const customHeaders = headersEnabled && Array.isArray(formData.customHeaders)
-        ? formData.customHeaders.filter((h) => h.key && h.key.trim())
-        : [];
+      const customHeaders = buildCustomProviderHeaders(
+        formData.customUserAgent,
+        formData.customHeaders
+      );
 
       const res = await fetch("/api/provider-nodes/validate", {
         method: "POST",
@@ -80,7 +83,7 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
           apiKey: checkKey,
           type: isAnthropic ? "anthropic-compatible" : "openai-compatible",
           modelId: checkModelId.trim() || undefined,
-          headersEnabled,
+          headersEnabled: true,
           customHeaders,
         }),
       });
@@ -127,14 +130,35 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
           placeholder={isAnthropic ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"}
           hint={`Use the base URL (ending in /v1) for your ${isAnthropic ? "Anthropic" : "OpenAI"}-compatible API.`}
         />
-        <div className="flex flex-col gap-3 py-1">
-          <Toggle
-            label="Custom Headers"
-            description="Add one or more custom HTTP headers sent to this provider"
-            checked={formData.headersEnabled}
-            onChange={(val) => setFormData({ ...formData, headersEnabled: val })}
-          />
-          {formData.headersEnabled && (
+        <Input
+          label="Custom User-Agent"
+          value={formData.customUserAgent}
+          onChange={(e) => setFormData({ ...formData, customUserAgent: e.target.value })}
+          placeholder="Mozilla/5.0 ... Chrome/136.0.0.0 Safari/537.36"
+          hint="Leave blank to use the default Chrome User-Agent."
+        />
+        <div className="flex flex-col gap-2 py-1">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-text-main">Custom Headers</p>
+              <p className="text-xs text-text-muted">
+                Add optional HTTP headers sent to this provider.
+              </p>
+            </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setFormData({
+                  ...formData,
+                  customHeaders: [...formData.customHeaders, { key: "", value: "" }],
+                });
+              }}
+            >
+              + Add
+            </Button>
+          </div>
+          {formData.customHeaders.length > 0 && (
             <div className="flex flex-col gap-2 p-3 bg-surface-2 rounded-xl border border-border">
               {formData.customHeaders.map((header, idx) => (
                 <div key={idx} className="flex gap-2 items-center">
@@ -143,7 +167,7 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
                     value={header.key}
                     onChange={(e) => {
                       const newHeaders = [...formData.customHeaders];
-                      newHeaders[idx].key = e.target.value;
+                      newHeaders[idx] = { ...newHeaders[idx], key: e.target.value };
                       setFormData({ ...formData, customHeaders: newHeaders });
                     }}
                     className="flex-1"
@@ -153,7 +177,7 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
                     value={header.value}
                     onChange={(e) => {
                       const newHeaders = [...formData.customHeaders];
-                      newHeaders[idx].value = e.target.value;
+                      newHeaders[idx] = { ...newHeaders[idx], value: e.target.value };
                       setFormData({ ...formData, customHeaders: newHeaders });
                     }}
                     className="flex-1"
@@ -165,23 +189,10 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
                       const newHeaders = formData.customHeaders.filter((_, i) => i !== idx);
                       setFormData({ ...formData, customHeaders: newHeaders });
                     }}
-                    className="text-red-500 hover:text-red-600 p-2 mt-1"
+                    className="text-text-muted hover:!text-red-500 p-2 mt-1"
                   />
                 </div>
               ))}
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  setFormData({
-                    ...formData,
-                    customHeaders: [...formData.customHeaders, { key: "", value: "" }],
-                  });
-                }}
-                className="mt-1 self-start"
-              >
-                + Add Header
-              </Button>
             </div>
           )}
         </div>

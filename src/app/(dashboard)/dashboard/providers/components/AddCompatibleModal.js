@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
-import { Badge, Button, Input, Modal, Select, Toggle } from "@/shared/components";
+import { Badge, Button, Input, Modal, Select } from "@/shared/components";
+import { buildCustomProviderHeaders } from "@/shared/utils/customProviderHeaders";
 
 const VARIANT_CONFIG = {
   openai: {
@@ -41,8 +42,8 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
     prefix: "",
     ...(config.hasApiType ? { apiType: "chat" } : {}),
     baseUrl: config.defaultBaseUrl,
-    headersEnabled: false,
-    customHeaders: [{ key: "", value: "" }],
+    customUserAgent: "",
+    customHeaders: [],
   });
 
   const [formData, setFormData] = useState(initialFormData);
@@ -67,10 +68,10 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
     if (!formData.name.trim() || !formData.prefix.trim() || !formData.baseUrl.trim()) return;
     setSubmitting(true);
     try {
-      const headersEnabled = formData.headersEnabled === true;
-      const customHeaders = headersEnabled && Array.isArray(formData.customHeaders)
-        ? formData.customHeaders.filter((h) => h.key && h.key.trim())
-        : [];
+      const customHeaders = buildCustomProviderHeaders(
+        formData.customUserAgent,
+        formData.customHeaders
+      );
 
       const res = await fetch("/api/provider-nodes", {
         method: "POST",
@@ -81,7 +82,7 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
           ...(config.hasApiType ? { apiType: formData.apiType } : {}),
           baseUrl: formData.baseUrl,
           type: config.type,
-          headersEnabled,
+          headersEnabled: true,
           customHeaders,
         }),
       });
@@ -102,10 +103,10 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
   const handleValidate = async () => {
     setValidating(true);
     try {
-      const headersEnabled = formData.headersEnabled === true;
-      const customHeaders = headersEnabled && Array.isArray(formData.customHeaders)
-        ? formData.customHeaders.filter((h) => h.key && h.key.trim())
-        : [];
+      const customHeaders = buildCustomProviderHeaders(
+        formData.customUserAgent,
+        formData.customHeaders
+      );
 
       const res = await fetch("/api/provider-nodes/validate", {
         method: "POST",
@@ -115,7 +116,7 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
           apiKey: checkKey,
           type: config.type,
           modelId: checkModelId.trim() || undefined,
-          headersEnabled,
+          headersEnabled: true,
           customHeaders,
         }),
       });
@@ -181,14 +182,35 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
           placeholder={config.defaultBaseUrl}
           hint={config.baseUrlHint}
         />
-        <div className="flex flex-col gap-3 py-1">
-          <Toggle
-            label="Custom Headers"
-            description="Add one or more custom HTTP headers sent to this provider"
-            checked={formData.headersEnabled}
-            onChange={(val) => setFormData({ ...formData, headersEnabled: val })}
-          />
-          {formData.headersEnabled && (
+        <Input
+          label="Custom User-Agent"
+          value={formData.customUserAgent}
+          onChange={(e) => setFormData({ ...formData, customUserAgent: e.target.value })}
+          placeholder="Mozilla/5.0 ... Chrome/136.0.0.0 Safari/537.36"
+          hint="Leave blank to use the default Chrome User-Agent."
+        />
+        <div className="flex flex-col gap-2 py-1">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-text-main">Custom Headers</p>
+              <p className="text-xs text-text-muted">
+                Add optional HTTP headers sent to this provider.
+              </p>
+            </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setFormData({
+                  ...formData,
+                  customHeaders: [...formData.customHeaders, { key: "", value: "" }],
+                });
+              }}
+            >
+              + Add
+            </Button>
+          </div>
+          {formData.customHeaders.length > 0 && (
             <div className="flex flex-col gap-2 p-3 bg-surface-2 rounded-xl border border-border">
               {formData.customHeaders.map((header, idx) => (
                 <div key={idx} className="flex gap-2 items-center">
@@ -197,7 +219,7 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
                     value={header.key}
                     onChange={(e) => {
                       const newHeaders = [...formData.customHeaders];
-                      newHeaders[idx].key = e.target.value;
+                      newHeaders[idx] = { ...newHeaders[idx], key: e.target.value };
                       setFormData({ ...formData, customHeaders: newHeaders });
                     }}
                     className="flex-1"
@@ -207,7 +229,7 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
                     value={header.value}
                     onChange={(e) => {
                       const newHeaders = [...formData.customHeaders];
-                      newHeaders[idx].value = e.target.value;
+                      newHeaders[idx] = { ...newHeaders[idx], value: e.target.value };
                       setFormData({ ...formData, customHeaders: newHeaders });
                     }}
                     className="flex-1"
@@ -219,23 +241,10 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
                       const newHeaders = formData.customHeaders.filter((_, i) => i !== idx);
                       setFormData({ ...formData, customHeaders: newHeaders });
                     }}
-                    className="text-red-500 hover:text-red-600 p-2 mt-1"
+                    className="text-text-muted hover:!text-red-500 p-2 mt-1"
                   />
                 </div>
               ))}
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  setFormData({
-                    ...formData,
-                    customHeaders: [...formData.customHeaders, { key: "", value: "" }],
-                  });
-                }}
-                className="mt-1 self-start"
-              >
-                + Add Header
-              </Button>
             </div>
           )}
         </div>
