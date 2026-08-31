@@ -448,8 +448,12 @@ async function testOAuthConnection(connection, effectiveProxy = null) {
 async function fetchWithConnectionProxy(url, options = {}, effectiveProxy = null) {
   const { proxyAwareFetch } = await import("open-sse/utils/proxyFetch.js");
 
+  // Add a 15-second timeout to prevent connection testing from hanging indefinitely
+  // and exhausting the browser/Node.js connection pools.
+  const signal = options.signal || AbortSignal.timeout(15000);
+
   // Always bypass Next.js native fetch because it overrides user-agent to 'node' aggressively
-  const safeOptions = { ...options, bypassNextjsFetch: true };
+  const safeOptions = { ...options, signal, bypassNextjsFetch: true };
 
   // Vercel relay: forward via relay URL
   if (effectiveProxy?.vercelRelayUrl) {
