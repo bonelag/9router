@@ -1,4 +1,5 @@
 import { buildModelsList } from "../route.js";
+import { adaptModelsResponse, adaptSingleModelResponse, detectModelsClient, CLIENT_TYPES } from "../clientAdapters.js";
 
 // URL slug → service kind(s). `web` covers both webSearch and webFetch.
 const KIND_SLUG_MAP = {
@@ -37,7 +38,7 @@ function json(data, options = {}) {
  * GET /v1/models/{provider}/{model} - OpenAI-compatible single model lookup.
  * Supported kinds: image, tts, stt, embedding, image-to-text, web.
  */
-export async function GET(_request, { params }) {
+export async function GET(request, { params }) {
   try {
     const { model } = await params;
     const path = Array.isArray(model) ? model : [model];
@@ -46,6 +47,10 @@ export async function GET(_request, { params }) {
 
     if (kindFilter) {
       const data = await buildModelsList(kindFilter);
+      const client = detectModelsClient(request);
+      if (client === CLIENT_TYPES.ANTHROPIC) {
+        return json(adaptModelsResponse(data, request));
+      }
       return json({ object: "list", data });
     }
 
@@ -65,6 +70,11 @@ export async function GET(_request, { params }) {
         },
         { status: 404 },
       );
+    }
+
+    const client = detectModelsClient(request);
+    if (client === CLIENT_TYPES.ANTHROPIC) {
+      return json(adaptSingleModelResponse(matchedModel, request));
     }
 
     return json(matchedModel);
