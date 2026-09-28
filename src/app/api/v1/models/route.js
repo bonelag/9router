@@ -4,6 +4,7 @@ import {
   getProviderAlias,
   isAnthropicCompatibleProvider,
   isOpenAICompatibleProvider,
+  resolveProviderId,
 } from "@/shared/constants/providers";
 import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
@@ -180,6 +181,20 @@ function inferKindFromUnknownModelId(modelId) {
   if (/tts|speech|audio|voice/.test(lower)) return "tts";
   if (/image|imagen|dall-?e|flux|sdxl|sd-|stable-diffusion/.test(lower)) return "image";
   return LLM_KIND;
+}
+
+export function getRegistryProviderModels(providerId, outputAlias) {
+  if (PROVIDER_MODELS[providerId]?.length) return PROVIDER_MODELS[providerId];
+  const staticAlias = PROVIDER_ID_TO_ALIAS[providerId];
+  if (staticAlias && PROVIDER_MODELS[staticAlias]?.length) return PROVIDER_MODELS[staticAlias];
+  if (outputAlias) {
+    if (PROVIDER_MODELS[outputAlias]?.length) return PROVIDER_MODELS[outputAlias];
+    const resolvedId = resolveProviderId(outputAlias);
+    if (resolvedId && PROVIDER_MODELS[resolvedId]?.length) return PROVIDER_MODELS[resolvedId];
+    const resolvedAlias = PROVIDER_ID_TO_ALIAS[resolvedId];
+    if (resolvedAlias && PROVIDER_MODELS[resolvedAlias]?.length) return PROVIDER_MODELS[resolvedAlias];
+  }
+  return [];
 }
 
 async function fetchCompatibleModelIds(connection) {
@@ -369,6 +384,16 @@ export async function buildModelsList(kindFilter, options = {}) {
       });
     }
   } else {
+    for (const [providerId, provider] of Object.entries(AI_PROVIDERS)) {
+      if (provider.noAuth && !provider.hidden && !activeConnectionByProvider.has(providerId)) {
+        activeConnectionByProvider.set(providerId, {
+          id: "noauth",
+          provider: providerId,
+          isActive: true,
+        });
+      }
+    }
+
     for (const [providerId, conn] of activeConnectionByProvider.entries()) {
       if (!providerMatchesKinds(providerId, kindFilter)) continue;
 
@@ -378,7 +403,7 @@ export async function buildModelsList(kindFilter, options = {}) {
         || getProviderAlias(providerId)
         || staticAlias
       ).trim();
-      const providerModels = PROVIDER_MODELS[staticAlias] || [];
+      const providerModels = getRegistryProviderModels(providerId, outputAlias);
       const enabledModels = conn?.providerSpecificData?.enabledModels;
       const hasExplicitEnabledModels =
         Array.isArray(enabledModels) && enabledModels.length > 0;
@@ -402,9 +427,6 @@ export async function buildModelsList(kindFilter, options = {}) {
           )
         : providerModels.map((model) => model.id);
 
-      if (isCompatibleProvider && rawModelIds.length === 0 && !skipDynamicFetch) {
-        rawModelIds = await fetchCompatibleModelIds(conn);
-      }
 
       // Config-driven live catalog override (e.g. Kiro returns dynamic
       // -thinking/-agentic variants per account). On failure, fall back to

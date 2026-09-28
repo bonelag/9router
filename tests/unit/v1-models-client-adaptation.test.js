@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   detectModelsClient,
   adaptModelsResponse,
@@ -369,4 +369,49 @@ describe("Route integration GET /v1/models", () => {
       expect(reasoningModel.reasoning_efforts.length).toBeGreaterThan(0);
     }
   });
+
+  it("GET includes noAuth providers like opencode", async () => {
+    const { GET } = await import("../../src/app/api/v1/models/route.js");
+    const req = new Request("https://router.test/v1/models", {
+      headers: { "user-agent": "Cursor/0.45.11" },
+    });
+    const res = await GET(req);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    const opencodeModel = json.data?.find((m) => m.id === "oc/muse-spark-1.3-contributor-free");
+    expect(opencodeModel).toBeDefined();
+    expect(opencodeModel.owned_by).toBe("oc");
+    expect(opencodeModel.capabilities?.supports_reasoning).toBe(true);
+    expect(opencodeModel.capabilities?.context_length).toBe(1048576);
+  });
+
+  it("does not fetch upstream for custom providers", async () => {
+    const { buildModelsList } = await import("../../src/app/api/v1/models/route.js");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    try {
+      const models = await buildModelsList(["llm"]);
+      expect(Array.isArray(models)).toBe(true);
+      const calledModelsUrl = fetchSpy.mock.calls.some(
+        ([url]) => typeof url === "string" && url.endsWith("/models")
+      );
+      expect(calledModelsUrl).toBe(false);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("resolves registry models for custom providers matching known alias", async () => {
+    const { getRegistryProviderModels } = await import("../../src/app/api/v1/models/route.js");
+    const zenModels = getRegistryProviderModels("openai-compatible-chat-123", "ocz");
+    expect(zenModels.length).toBeGreaterThan(0);
+    expect(zenModels.some((m) => m.id === "muse-spark-1.3-contributor-free")).toBe(true);
+
+    const openAiModels = getRegistryProviderModels("openai-compatible-chat-456", "openai");
+    expect(openAiModels.length).toBeGreaterThan(0);
+    expect(openAiModels.some((m) => m.id === "gpt-4o")).toBe(true);
+  });
 });
+
+
+
+
