@@ -225,6 +225,19 @@ export async function getAntigravityUsage(accessToken, providerSpecificData, pro
           displayName: info.displayName || modelKey,
         };
       }
+
+      if (quotas['claude-sonnet-5-5-high'] && !quotas['claude-sonnet-5-5']) {
+        quotas['claude-sonnet-5-5'] = {
+          ...quotas['claude-sonnet-5-5-high'],
+          displayName: 'Claude Sonnet 5.5',
+        };
+      }
+      if (quotas['claude-opus-5-5-high'] && !quotas['claude-opus-5-5']) {
+        quotas['claude-opus-5-5'] = {
+          ...quotas['claude-opus-5-5-high'],
+          displayName: 'Claude Opus 5.5',
+        };
+      }
     }
 
     // Best-effort weekly quota overlay — never blocks or breaks per-model results

@@ -15,6 +15,8 @@ import { resolveZedModels } from "open-sse/shared/zedAuth.js";
 import { resolveClineModels, resolveClinepassModels } from "open-sse/services/clinepassModels.js";
 import { customProviderFetch } from "open-sse/utils/customHeaders.js";
 import codexProvider from "open-sse/providers/registry/codex.js";
+import { ANTIGRAVITY_IDE_BASE_URL, ANTIGRAVITY_IDE_USER_AGENT, ANTIGRAVITY_OAUTH_CLIENT } from "open-sse/providers/shared.js";
+
 
 /**
  * Fetch /models for openai-/anthropic-compatible custom nodes.
@@ -231,13 +233,33 @@ const PROVIDER_MODELS_CONFIG = {
     })
   },
   antigravity: {
-    url: "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:models",
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    authHeader: "Authorization",
-    authPrefix: "Bearer ",
-    body: {},
-    parseResponse: (data) => data.models || []
+    customResolver: buildOAuthResolver({
+      refreshFn: (conn) => refreshGoogleToken(conn.refreshToken, ANTIGRAVITY_OAUTH_CLIENT.clientId, ANTIGRAVITY_OAUTH_CLIENT.clientSecret),
+      fetchFn: (token, conn) => {
+        const projectId = conn.projectId || conn.providerSpecificData?.projectId;
+        const body = projectId ? { project: projectId } : {};
+        return fetch(`${ANTIGRAVITY_IDE_BASE_URL}/v1internal:fetchAvailableModels`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`,
+            "User-Agent": ANTIGRAVITY_IDE_USER_AGENT,
+          },
+          body: JSON.stringify(body),
+        });
+      },
+      parseFn: (data) => {
+        const live = parseGeminiCliModels(data);
+        const staticModels = getStaticProviderModels("antigravity");
+        if (live.length > 0) {
+          const liveIds = new Set(live.map((m) => m.id));
+          const aliases = staticModels.filter((m) => !liveIds.has(m.id) && m.upstreamModelId);
+          return [...aliases, ...live];
+        }
+        return staticModels;
+      },
+      errorLabel: "Failed to fetch Antigravity models",
+    }),
   },
   github: {
     url: "https://api.githubcopilot.com/models",
