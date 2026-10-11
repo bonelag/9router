@@ -1,4 +1,6 @@
 import { PROVIDER_MODELS } from "@/shared/constants/models";
+import { getDisabledModels } from "@/lib/disabledModelsDb";
+import { getProviderAlias } from "@/shared/constants/providers";
 
 /**
  * Handle CORS preflight
@@ -19,6 +21,7 @@ export async function OPTIONS() {
  */
 export async function GET() {
   try {
+    const disabled = await getDisabledModels();
     const models = [];
     const seen = new Set();
 
@@ -36,7 +39,10 @@ export async function GET() {
     }
     
     for (const [provider, providerModels] of Object.entries(PROVIDER_MODELS)) {
+      const alias = getProviderAlias(provider) || provider;
+      const list = disabled[alias] || disabled[provider] || [];
       for (const model of providerModels) {
+        if (list.includes(model.id)) continue;
         addModel({
           name: `models/${provider}/${model.id}`,
           displayName: model.name || model.id,

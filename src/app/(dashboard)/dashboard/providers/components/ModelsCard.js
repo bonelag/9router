@@ -2,18 +2,18 @@
 
 import { useState, useCallback, useEffect } from "react";
 import PropTypes from "prop-types";
-import { Card, Button, Modal } from "@/shared/components";
+import { Card, Button, Modal, Toggle } from "@/shared/components";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { getProviderAlias } from "@/shared/constants/providers";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 
 // ── ModelRow ───────────────────────────────────────────────────
-export function ModelRow({ model, fullModel, copied, onCopy, testStatus, isCustom, isFree, onDeleteAlias, onTest, isTesting }) {
+export function ModelRow({ model, fullModel, copied, onCopy, testStatus, isCustom, isFree, onDeleteAlias, onTest, isTesting, isEnabled = true, onToggle }) {
   const borderColor = testStatus === "ok" ? "border-green-500/40" : testStatus === "error" ? "border-red-500/40" : "border-border";
   const iconColor = testStatus === "ok" ? "#22c55e" : testStatus === "error" ? "#ef4444" : undefined;
 
   return (
-    <div className={`group px-3 py-2 rounded-lg border ${borderColor} hover:bg-sidebar/50`}>
+    <div className={`group px-3 py-2 rounded-lg border ${borderColor} hover:bg-sidebar/50 transition-opacity ${!isEnabled ? "opacity-60" : ""}`}>
       <div className="flex items-center gap-2">
         <span className="material-symbols-outlined text-base" style={iconColor ? { color: iconColor } : undefined}>
           {testStatus === "ok" ? "check_circle" : testStatus === "error" ? "cancel" : "smart_toy"}
@@ -43,9 +43,17 @@ export function ModelRow({ model, fullModel, copied, onCopy, testStatus, isCusto
           </span>
         </div>
         {isFree && <span className="text-[10px] font-bold text-green-500 bg-green-500/10 px-1.5 py-0.5 rounded">FREE</span>}
+        {onToggle && (
+          <Toggle
+            size="sm"
+            checked={isEnabled}
+            onChange={onToggle}
+            className="shrink-0"
+          />
+        )}
         {isCustom && (
-          <button onClick={onDeleteAlias} className="p-0.5 hover:bg-red-500/10 rounded text-text-muted hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity ml-auto" title="Remove custom model">
-            <span className="material-symbols-outlined text-sm">close</span>
+          <button onClick={onDeleteAlias} className="p-1 hover:bg-red-50 dark:hover:bg-red-500/10 rounded text-red-500 transition-colors shrink-0 ml-auto" title="Remove custom model">
+            <span className="material-symbols-outlined text-sm">delete</span>
           </button>
         )}
       </div>
@@ -64,6 +72,8 @@ ModelRow.propTypes = {
   onDeleteAlias: PropTypes.func,
   onTest: PropTypes.func,
   isTesting: PropTypes.bool,
+  isEnabled: PropTypes.bool,
+  onToggle: PropTypes.func,
 };
 
 // ── AddCustomModelModal ────────────────────────────────────────
@@ -112,6 +122,7 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
   const { copied, copy } = useCopyToClipboard();
   const [modelAliases, setModelAliases] = useState({});
   const [customModels, setCustomModels] = useState([]);
+  const [disabledModelIds, setDisabledModelIds] = useState([]);
   const [modelTestResults, setModelTestResults] = useState({});
   const [testingModelId, setTestingModelId] = useState(null);
   const [testError, setTestError] = useState("");
@@ -122,18 +133,47 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
 
   const fetchData = useCallback(async () => {
     try {
-      const [aliasRes, customRes] = await Promise.all([
+      const [aliasRes, customRes, disabledRes] = await Promise.all([
         fetch("/api/models/alias"),
         fetch("/api/models/custom", { cache: "no-store" }),
+        fetch(`/api/models/disabled?providerAlias=${encodeURIComponent(providerAlias)}`, { cache: "no-store" }),
       ]);
       const aliasData = await aliasRes.json();
       const customData = await customRes.json();
+      const disabledData = await disabledRes.json();
       if (aliasRes.ok) setModelAliases(aliasData.aliases || {});
       if (customRes.ok) setCustomModels(customData.models || []);
+      if (disabledRes.ok) setDisabledModelIds(disabledData.ids || []);
     } catch (e) { console.log("ModelsCard fetch error:", e); }
-  }, []);
+  }, [providerAlias]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  const handleDisableModel = async (modelId) => {
+    setDisabledModelIds((prev) => (prev.includes(modelId) ? prev : [...prev, modelId]));
+    try {
+      const res = await fetch("/api/models/disabled", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerAlias, ids: [modelId] }),
+      });
+      if (res.ok) await fetchData();
+    } catch (e) {
+      console.log("disable model error:", e);
+      await fetchData();
+    }
+  };
+
+  const handleEnableModel = async (modelId) => {
+    setDisabledModelIds((prev) => prev.filter((id) => id !== modelId));
+    try {
+      const res = await fetch(`/api/models/disabled?providerAlias=${encodeURIComponent(providerAlias)}&id=${encodeURIComponent(modelId)}`, { method: "DELETE" });
+      if (res.ok) await fetchData();
+    } catch (e) {
+      console.log("enable model error:", e);
+      await fetchData();
+    }
+  };
 
   const handleSetAlias = async (modelId, alias) => {
     const fullModel = `${providerAlias}/${modelId}`;
@@ -214,6 +254,7 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
   );
 
   const displayModels = builtInModels;
+  const disabledSet = new Set(disabledModelIds);
 
   return (
     <>
@@ -241,6 +282,8 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
                 onTest={() => handleTestModel(model.id)}
                 isTesting={testingModelId === model.id}
                 isFree={model.isFree}
+                isEnabled={!disabledSet.has(model.id)}
+                onToggle={(checked) => (checked ? handleEnableModel(model.id) : handleDisableModel(model.id))}
               />
             );
           })}
@@ -258,6 +301,8 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
               onTest={() => handleTestModel(model.id)}
               isTesting={testingModelId === model.id}
               isCustom
+              isEnabled={!disabledSet.has(model.id)}
+              onToggle={(checked) => (checked ? handleEnableModel(model.id) : handleDisableModel(model.id))}
             />
           ))}
 

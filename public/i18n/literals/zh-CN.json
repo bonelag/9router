@@ -551,7 +551,7 @@
   "Import Backup": "导入备份",
   "Import CLIProxyAPI JSON": "导入 CLIProxyAPI JSON",
   "Import Token": "导入令牌",
-  "Importing...": "导入中...",
+  "Importing...": "正在导入...",
   "In": "输入",
   "In / Out": "输入/输出",
   "Inactive": "未激活",
@@ -1415,5 +1415,16 @@
   "Singapore": "新加坡",
   "Europe · Amsterdam": "欧洲 · 阿姆斯特丹",
   "Russia": "俄罗斯",
-  "India": "印度"
+  "India": "印度",
+  "Enable All": "全部启用",
+  "Delete All": "全部删除",
+  "Disable All Models": "禁用所有模型",
+  "Delete All Models": "删除所有模型",
+  "Disable all models": "禁用所有模型",
+  "Delete all models": "删除所有模型",
+  "Import from /models": "从 /models 导入",
+  "Adding...": "正在添加...",
+  "Model already exists in list": "模型已存在于列表中",
+  "No models returned from /models.": "从 /models 未返回任何模型。",
+  "No new models were added.": "未添加新模型。"
 }

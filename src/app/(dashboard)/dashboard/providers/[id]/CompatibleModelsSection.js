@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import PropTypes from "prop-types";
-import { Button } from "@/shared/components";
+import { Button, Toggle } from "@/shared/components";
 import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
-function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias, onTest, testStatus, isTesting }) {
+
+function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias, onTest, testStatus, isTesting, isEnabled = true, onToggle }) {
   const borderColor = testStatus === "ok"
     ? "border-green-500/40"
     : testStatus === "error"
@@ -18,9 +19,9 @@ function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias,
     : undefined;
 
   return (
-    <div className={`flex items-center gap-3 p-3 rounded-lg border ${borderColor} hover:bg-sidebar/50`}>
+    <div className={`flex items-center gap-3 p-3 rounded-lg border ${borderColor} hover:bg-sidebar/50 transition-opacity ${!isEnabled ? "opacity-60" : ""}`}>
       <span
-        className="material-symbols-outlined text-base text-text-muted"
+        className="material-symbols-outlined text-base text-text-muted shrink-0"
         style={iconColor ? { color: iconColor } : undefined}
       >
         {testStatus === "ok" ? "check_circle" : testStatus === "error" ? "cancel" : "smart_toy"}
@@ -60,23 +61,66 @@ function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias,
           )}
         </div>
       </div>
-      <button
-        onClick={onDeleteAlias}
-        className="p-1 hover:bg-red-50 rounded text-red-500"
-        title="Remove model"
-      >
-        <span className="material-symbols-outlined text-sm">delete</span>
-      </button>
+      <div className="flex items-center gap-2 shrink-0">
+        {onToggle && (
+          <Toggle
+            size="sm"
+            checked={isEnabled}
+            onChange={onToggle}
+            className="shrink-0"
+          />
+        )}
+        <button
+          onClick={onDeleteAlias}
+          className="p-1 hover:bg-red-50 dark:hover:bg-red-500/10 rounded text-red-500 transition-colors shrink-0"
+          title="Remove model"
+        >
+          <span className="material-symbols-outlined text-sm">delete</span>
+        </button>
+      </div>
     </div>
   );
 }
 
-export default function CompatibleModelsSection({ providerStorageAlias, providerDisplayAlias, modelAliases, customModels, copied, onCopy, onDeleteAlias, onAddCustomModel, onDeleteCustomModel, connections, isAnthropic }) {
+CompatibleModelRow.propTypes = {
+  modelId: PropTypes.string.isRequired,
+  fullModel: PropTypes.string.isRequired,
+  copied: PropTypes.string,
+  onCopy: PropTypes.func.isRequired,
+  onDeleteAlias: PropTypes.func.isRequired,
+  onTest: PropTypes.func,
+  testStatus: PropTypes.oneOf(["ok", "error"]),
+  isTesting: PropTypes.bool,
+  isEnabled: PropTypes.bool,
+  onToggle: PropTypes.func,
+};
+
+export default function CompatibleModelsSection({
+  providerStorageAlias,
+  providerDisplayAlias,
+  modelAliases,
+  customModels,
+  copied,
+  onCopy,
+  onDeleteAlias,
+  onAddCustomModel,
+  onDeleteCustomModel,
+  disabledModelIds = [],
+  onEnableModel,
+  onDisableModel,
+  onDisableAll,
+  onEnableAll,
+  onDeleteAll,
+  connections,
+  isAnthropic
+}) {
   const [newModel, setNewModel] = useState("");
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
   const [testingModelId, setTestingModelId] = useState(null);
   const [modelTestResults, setModelTestResults] = useState({});
+
+  const disabledSet = new Set(disabledModelIds || []);
 
   const handleTestModel = async (modelId) => {
     if (testingModelId) return;
@@ -103,17 +147,34 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
     type: "llm",
   });
 
+  const trimmedInput = newModel.trim();
+  const searchLower = trimmedInput.toLowerCase();
+  const filteredModels = searchLower
+    ? allModels.filter((m) => {
+        const idMatch = m.id?.toLowerCase().includes(searchLower);
+        const nameMatch = m.name?.toLowerCase().includes(searchLower);
+        const aliasMatch = m.alias?.toLowerCase().includes(searchLower);
+        return idMatch || nameMatch || aliasMatch;
+      })
+    : allModels;
+
+  const modelAlreadyExists = allModels.some(
+    (m) => m.id.toLowerCase() === trimmedInput.toLowerCase()
+  );
+
+  const visibleIds = filteredModels.map((model) => model.id);
+  const visibleActiveIds = visibleIds.filter((id) => !disabledSet.has(id));
+
   const handleAdd = async () => {
-    if (!newModel.trim() || adding) return;
-    const modelId = newModel.trim();
-    if (allModels.some((model) => model.id === modelId)) {
+    if (!trimmedInput || adding) return;
+    if (modelAlreadyExists) {
       alert("Model already exists for this provider.");
       return;
     }
 
     setAdding(true);
     try {
-      await onAddCustomModel(modelId);
+      await onAddCustomModel(trimmedInput);
       setNewModel("");
     } catch (error) {
       console.log("Error adding model:", error);
@@ -168,18 +229,48 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
 
       <div className="flex items-end gap-2 flex-wrap">
         <div className="flex-1 min-w-[240px]">
-          <label htmlFor="new-compatible-model-input" className="text-xs text-text-muted mb-1 block">Model ID</label>
-          <input
-            id="new-compatible-model-input"
-            type="text"
-            value={newModel}
-            onChange={(e) => setNewModel(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-            placeholder={isAnthropic ? "claude-3-opus-20240229" : "gpt-4o"}
-            className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
-          />
+          <div className="flex items-center justify-between mb-1">
+            <label htmlFor="new-compatible-model-input" className="text-xs text-text-muted">
+              Model ID
+            </label>
+            {trimmedInput && (
+              <span className="text-[11px] text-text-muted">
+                {filteredModels.length} / {allModels.length}
+              </span>
+            )}
+          </div>
+          <div className="relative">
+            <input
+              id="new-compatible-model-input"
+              type="text"
+              value={newModel}
+              onChange={(e) => setNewModel(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleAdd()}
+              placeholder={isAnthropic ? "claude-3-opus-20240229" : "gpt-4o"}
+              className="w-full pl-10 pr-8 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
+            />
+            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-text-muted pointer-events-none">
+              search
+            </span>
+            {newModel && (
+              <button
+                type="button"
+                onClick={() => setNewModel("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-main p-0.5 rounded"
+                title="Clear"
+              >
+                <span className="material-symbols-outlined text-sm">close</span>
+              </button>
+            )}
+          </div>
         </div>
-        <Button size="sm" icon="add" onClick={handleAdd} disabled={!newModel.trim() || adding}>
+        <Button
+          size="sm"
+          icon="add"
+          onClick={handleAdd}
+          disabled={!trimmedInput || adding || modelAlreadyExists}
+          title={modelAlreadyExists ? "Model already exists in list" : "Add model"}
+        >
           {adding ? "Adding..." : "Add"}
         </Button>
         <Button size="sm" variant="secondary" icon="download" onClick={handleImport} disabled={!canImport || importing}>
@@ -194,20 +285,76 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
       )}
 
       {allModels.length > 0 && (
+        <div className="flex items-center justify-between gap-2 flex-wrap pt-2 border-t border-border/40">
+          <p className="text-xs text-text-muted">
+            {trimmedInput
+              ? `Showing ${filteredModels.length}/${allModels.length} models`
+              : `${allModels.length} model${allModels.length > 1 ? "s" : ""}`}
+          </p>
+          <div className="flex items-center gap-2">
+            {visibleActiveIds.length > 0 && (
+              <Button
+                size="sm"
+                variant="secondary"
+                icon="block"
+                onClick={() => onDisableAll?.(visibleActiveIds)}
+              >
+                Disable All
+              </Button>
+            )}
+            {disabledModelIds.length > 0 && (
+              <Button
+                size="sm"
+                variant="secondary"
+                icon="restart_alt"
+                onClick={onEnableAll}
+              >
+                Active All
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="danger"
+              icon="delete"
+              onClick={() => onDeleteAll?.(filteredModels)}
+            >
+              Delete All
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {allModels.length > 0 && (
         <div className="flex flex-col gap-3">
-          {allModels.map(({ id, alias, source }) => (
-            <CompatibleModelRow
-              key={`${source}-${providerStorageAlias}/${id}`}
-              modelId={id}
-              fullModel={`${providerDisplayAlias}/${id}`}
-              copied={copied}
-              onCopy={onCopy}
-              onDeleteAlias={() => source === "custom" ? onDeleteCustomModel(id) : onDeleteAlias(alias)}
-              onTest={connections.length > 0 ? () => handleTestModel(id) : undefined}
-              testStatus={modelTestResults[id]}
-              isTesting={testingModelId === id}
-            />
-          ))}
+          {filteredModels.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border p-4 text-center">
+              <p className="text-xs text-text-muted mb-2">
+                No models found
+              </p>
+              <Button size="sm" icon="add" onClick={handleAdd} disabled={adding}>
+                Add
+              </Button>
+            </div>
+          ) : (
+            filteredModels.map(({ id, alias, source }) => {
+              const isEnabled = !disabledSet.has(id);
+              return (
+                <CompatibleModelRow
+                  key={`${source}-${providerStorageAlias}/${id}`}
+                  modelId={id}
+                  fullModel={`${providerDisplayAlias}/${id}`}
+                  copied={copied}
+                  onCopy={onCopy}
+                  onDeleteAlias={() => source === "custom" ? onDeleteCustomModel(id) : onDeleteAlias(alias)}
+                  onTest={connections.length > 0 ? () => handleTestModel(id) : undefined}
+                  testStatus={modelTestResults[id]}
+                  isTesting={testingModelId === id}
+                  isEnabled={isEnabled}
+                  onToggle={(checked) => (checked ? onEnableModel?.(id) : onDisableModel?.(id))}
+                />
+              );
+            })
+          )}
         </div>
       )}
     </div>
@@ -224,9 +371,16 @@ CompatibleModelsSection.propTypes = {
   onDeleteAlias: PropTypes.func.isRequired,
   onAddCustomModel: PropTypes.func.isRequired,
   onDeleteCustomModel: PropTypes.func.isRequired,
+  disabledModelIds: PropTypes.arrayOf(PropTypes.string),
+  onEnableModel: PropTypes.func,
+  onDisableModel: PropTypes.func,
+  onDisableAll: PropTypes.func,
+  onEnableAll: PropTypes.func,
+  onDeleteAll: PropTypes.func,
   connections: PropTypes.arrayOf(PropTypes.shape({
     id: PropTypes.string,
     isActive: PropTypes.bool,
   })).isRequired,
   isAnthropic: PropTypes.bool,
 };
+

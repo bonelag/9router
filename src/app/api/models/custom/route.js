@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getCustomModels, addCustomModel, deleteCustomModel } from "@/models";
+import { getCustomModels, addCustomModel, deleteCustomModel, deleteCustomModelsForProvider } from "@/models";
 import { CAPACITY_META, isSttTransport } from "@/shared/constants/models";
 
 export const dynamic = "force-dynamic";
@@ -52,13 +52,26 @@ export async function POST(request) {
   }
 }
 
-// DELETE /api/models/custom?providerAlias=xxx&id=yyy&type=zzz
+// DELETE /api/models/custom?providerAlias=xxx&id=yyy&type=zzz OR ?providerAlias=xxx&all=true
 export async function DELETE(request) {
   try {
     const { searchParams } = new URL(request.url);
     const providerAlias = searchParams.get("providerAlias");
     const id = searchParams.get("id");
     const type = searchParams.get("type") || "llm";
+    const all = searchParams.get("all") === "true";
+
+    if (all) {
+      if (!providerAlias) {
+        return NextResponse.json({ error: "providerAlias required" }, { status: 400 });
+      }
+      await deleteCustomModelsForProvider({
+        providerAlias,
+        type: searchParams.has("type") ? type : undefined,
+      });
+      return NextResponse.json({ success: true });
+    }
+
     if (!providerAlias || !id) {
       return NextResponse.json({ error: "providerAlias and id required" }, { status: 400 });
     }
