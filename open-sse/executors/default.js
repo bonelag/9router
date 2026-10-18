@@ -101,7 +101,6 @@ export class DefaultExecutor extends BaseExecutor {
     return injectReasoningContent({ provider: this.provider, model, body: transformed });
   }
 
-<<<<<<< HEAD
   // Strip first-party-only Claude body fields that agent_router-style gateways
   // reject as content-blocked / invalid params when the baseUrl is not Anthropic.
   sanitizeAnthropicCompatibleBody(body, credentials) {
@@ -161,7 +160,8 @@ export class DefaultExecutor extends BaseExecutor {
     if (body.metadata) delete body.metadata;
 
     return body;
-=======
+  }
+
   applyNousAttribution(model, body, stream, credentials) {
     if (!this.provider?.startsWith?.("openai-compatible-") || !credentials?.apiKey
       || !body || typeof body !== "object" || Array.isArray(body)
@@ -183,7 +183,6 @@ export class DefaultExecutor extends BaseExecutor {
       if (!tags.some((tag) => typeof tag === "string" && tag.startsWith(prefix))) tags.push(fallback);
     }
     return { ...body, tags: [...new Set(tags)] };
->>>>>>> decolua/master
   }
 
   // Fallback json_schema → json_object for openai-compatible providers without native Structured Output.
