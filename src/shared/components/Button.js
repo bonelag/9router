@@ -12,12 +12,14 @@ const variants = {
 };
 
 const sizes = {
+  xs: "h-6 px-2.5 text-[11px] rounded-[6px] gap-1.5",
   sm: "h-7 px-2.5 text-xs rounded-[8px] gap-1.5",
   md: "h-9 px-4 text-sm rounded-[10px] gap-2",
   lg: "h-11 px-6 text-sm rounded-[10px] gap-2",
 };
 
 const iconSizes = {
+  xs: "text-[12px]",
   sm: "text-[13px]",
   md: "text-[16px]",
   lg: "text-[18px]",
