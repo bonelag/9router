@@ -212,5 +212,11 @@
   "No models returned from /models.": "/models から返されたモデルはありません。",
   "No new models were added.": "新しいモデルは追加されませんでした。",
   "Add model": "モデルを追加",
-  "Restore model": "モデルを復元"
+  "Restore model": "モデルを復元",
+  "Fetch": "取得",
+  "Fetching...": "取得中...",
+  "Fetch from server": "サーバーから取得",
+  "Fetch models from official server": "公式サーバーからモデルを取得",
+  "No models available": "利用可能なモデルがありません",
+  "Delete model": "モデルを削除"
 }

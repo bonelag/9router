@@ -476,7 +476,7 @@
   "Fallback — try in order": "回退 — 按顺序尝试",
   "Features": "功能特性",
   "Fetch Qoder Models": "获取 Qoder 模型",
-  "Fetching...": "获取中...",
+  "Fetching...": "正在获取...",
   "Files": "文件",
   "Filter accounts by status": "按状态筛选账号",
   "Filter naming": "过滤命名",
@@ -1426,5 +1426,10 @@
   "Adding...": "正在添加...",
   "Model already exists in list": "模型已存在于列表中",
   "No models returned from /models.": "从 /models 未返回任何模型。",
-  "No new models were added.": "未添加新模型。"
+  "No new models were added.": "未添加新模型。",
+  "Fetch": "获取",
+  "Fetch from server": "从服务器获取",
+  "Fetch models from official server": "从官方服务器获取模型",
+  "No models available": "没有可用模型",
+  "Delete model": "删除模型"
 }

@@ -14,10 +14,10 @@ export default {
     textIcon: "MF",
   },
   category: "free",
-  noAuth: true,
+  noAuth: false,
   transport: {
     baseUrl: "https://api.xiaomimimo.com/api/free-ai/openai/chat",
-    noAuth: true,
+    noAuth: false,
   },
   models: [
     { id: "mimo-auto", name: "MiMo Auto" },

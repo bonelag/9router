@@ -10,6 +10,8 @@ import {
 } from "@/shared/constants/providers";
 import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
+import { getDeletedModels } from "@/lib/deletedModelsDb";
+import { getModelOverrides } from "@/lib/modelOverridesDb";
 import { getKeyAccessContext, filterModelsListForKey } from "@/sse/services/keyAccess.js";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
@@ -55,11 +57,28 @@ const ALIAS_TO_PROVIDER_ID = {
   ...ALIAS_TO_ID,
 };
 
-function comboSeatCapabilities(seat) {
+function getOverrideEntry(overrides, providerKeys, modelId) {
+  if (!overrides || !modelId) return null;
+  for (const key of providerKeys) {
+    const entry = key ? overrides[key]?.[modelId] : null;
+    if (entry) return entry;
+  }
+  return null;
+}
+
+function applyContextWindowOverride(caps, override) {
+  if (!caps || !Number.isFinite(override?.contextWindow)) return caps;
+  return { ...caps, contextWindow: override.contextWindow };
+}
+
+function comboSeatCapabilities(seat, overrides = null) {
   const slash = seat.indexOf("/");
   if (slash <= 0) return null;
   const alias = seat.slice(0, slash);
-  return getCapabilitiesForModel(ALIAS_TO_PROVIDER_ID[alias] || alias, seat.slice(slash + 1));
+  const providerId = ALIAS_TO_PROVIDER_ID[alias] || alias;
+  const modelId = seat.slice(slash + 1);
+  const caps = getCapabilitiesForModel(providerId, modelId);
+  return applyContextWindowOverride(caps, getOverrideEntry(overrides, [providerId, alias], modelId));
 }
 
 // Per-provider live model resolvers. Each receives a connection record and
@@ -296,7 +315,7 @@ function comboMatchesKinds(combo, kindFilter) {
 // treated as a literal model and publishes the 200k floor. Expand nested
 // names (cycle-guarded) so the published window is the true min across the
 // whole chain.
-function comboSeatLimits(combo, combosByName, visiting = new Set()) {
+function comboSeatLimits(combo, combosByName, visiting = new Set(), overrides = null) {
   const name = typeof combo?.name === "string" ? combo.name : null;
   if (name) {
     if (visiting.has(name)) return { contextWindow: undefined, maxOutput: undefined };
@@ -312,13 +331,13 @@ function comboSeatLimits(combo, combosByName, visiting = new Set()) {
       if (slash <= 0) {
         const nested = combosByName.get(seat);
         if (nested) {
-          const nestedLimits = comboSeatLimits(nested, combosByName, visiting);
+          const nestedLimits = comboSeatLimits(nested, combosByName, visiting, overrides);
           if (Number.isFinite(nestedLimits.contextWindow)) contextWindow = Math.min(contextWindow, nestedLimits.contextWindow);
           if (Number.isFinite(nestedLimits.maxOutput)) maxOutput = Math.min(maxOutput, nestedLimits.maxOutput);
           continue;
         }
       }
-      const caps = comboSeatCapabilities(seat) || getCapabilitiesForModel(null, seat);
+      const caps = comboSeatCapabilities(seat, overrides) || getCapabilitiesForModel(null, seat);
       if (Number.isFinite(caps?.contextWindow)) contextWindow = Math.min(contextWindow, caps.contextWindow);
       if (Number.isFinite(caps?.maxOutput)) maxOutput = Math.min(maxOutput, caps.maxOutput);
     }
@@ -376,7 +395,21 @@ export async function buildModelsList(kindFilter, options = {}) {
   } catch (e) {
     console.log("Could not fetch disabled models");
   }
+  let deletedByAlias = {};
+  try {
+    deletedByAlias = await getDeletedModels();
+  } catch (e) {
+    console.log("Could not fetch deleted models");
+  }
+  let modelOverrides = {};
+  try {
+    modelOverrides = await getModelOverrides();
+  } catch (e) {
+    console.log("Could not fetch model overrides");
+  }
   const isDisabled = (alias, modelId) => Array.isArray(disabledByAlias[alias]) && disabledByAlias[alias].includes(modelId);
+  const isDeleted = (alias, modelId) => Array.isArray(deletedByAlias[alias]) && deletedByAlias[alias].includes(modelId);
+  const overrideFor = (providerKeys, modelId) => getOverrideEntry(modelOverrides, providerKeys, modelId);
 
   const activeConnectionByProvider = new Map();
   for (const conn of connections) {
@@ -387,7 +420,7 @@ export async function buildModelsList(kindFilter, options = {}) {
 
   // Include no-auth free providers (e.g. opencode) so their models are exposed in /v1/models
   for (const [id, provider] of Object.entries(FREE_PROVIDERS || {})) {
-    if (provider?.noAuth && !activeConnectionByProvider.has(id)) {
+    if (provider?.noAuth && !provider?.hidden && !activeConnectionByProvider.has(id)) {
       activeConnectionByProvider.set(id, {
         id: "noauth",
         provider: id,
@@ -415,13 +448,13 @@ export async function buildModelsList(kindFilter, options = {}) {
     if (combo.kind === "webSearch" || combo.kind === "webFetch") {
       entry.kind = combo.kind;
     } else {
-      const comboCaps = aggregateComboCapabilities(combo.models, comboByName, comboSeatCapabilities);
+      const comboCaps = aggregateComboCapabilities(combo.models, comboByName, (seat) => comboSeatCapabilities(seat, modelOverrides));
       if (comboCaps) entry.capabilities = comboCaps;
       // Any seat can serve the request, so the only window a combo can promise is
       // its smallest. Combo entries were the only models on this endpoint that
       // published no limits at all, which leaves a client to guess from the name —
       // and it guesses high (see the snake_case note on the per-provider path).
-      const { contextWindow, maxOutput } = comboSeatLimits(combo, combosByName);
+      const { contextWindow, maxOutput } = comboSeatLimits(combo, combosByName, new Set(), modelOverrides);
       if (Number.isFinite(contextWindow)) entry.context_length = contextWindow;
       if (Number.isFinite(maxOutput)) entry.max_completion_tokens = maxOutput;
     }
@@ -435,12 +468,16 @@ export async function buildModelsList(kindFilter, options = {}) {
       if (!providerMatchesKinds(providerId, kindFilter)) continue;
       for (const model of providerModels) {
         if (!kindFilter.includes(modelKind(model))) continue;
+        if (isDeleted(alias, model.id) || isDeleted(providerId, model.id)) continue;
         if (isDisabled(alias, model.id) || isDisabled(providerId, model.id)) continue;
         models.push({
           id: `${alias}/${model.id}`,
           object: "model",
           owned_by: alias,
-          capabilities: getCapabilitiesForModel(alias, model.id),
+          capabilities: applyContextWindowOverride(
+            getCapabilitiesForModel(providerId, model.id),
+            overrideFor([providerId, alias], model.id)
+          ),
         });
       }
     }
@@ -454,7 +491,7 @@ export async function buildModelsList(kindFilter, options = {}) {
 
       const modelId = String(customModel.id).trim();
       if (!modelId) continue;
-      if (isDisabled(providerAlias, modelId)) continue;
+      if (isDeleted(providerAlias, modelId) || isDisabled(providerAlias, modelId)) continue;
 
       models.push({
         id: `${providerAlias}/${modelId}`,
@@ -598,6 +635,7 @@ export async function buildModelsList(kindFilter, options = {}) {
         // imageToText custom models stay in the LLM list (vision-capable chat models)
         const allowAsLlm = kind === "imageToText" && kindFilter.includes(LLM_KIND);
         if (!kindFilter.includes(kind) && !allowAsLlm) continue;
+        if (isDeleted(outputAlias, modelId) || isDeleted(staticAlias, modelId) || isDeleted(providerId, modelId)) continue;
         if (isDisabled(outputAlias, modelId) || isDisabled(staticAlias, modelId) || isDisabled(providerId, modelId)) continue;
 
         const model = {
@@ -611,7 +649,11 @@ export async function buildModelsList(kindFilter, options = {}) {
         // dynamically-discovered LLM models still surface vision/reasoning/search/tools.
         const liveCaps = liveCapabilitiesById.get(modelId);
         const serviceCaps = capabilitiesFromServiceKind(customKind || liveKind);
-        const caps = liveCaps || serviceCaps || (kind === LLM_KIND ? getCapabilitiesForModel(providerId, modelId) : null);
+        const contextOverride = overrideFor([providerId, staticAlias, outputAlias], modelId);
+        const caps = applyContextWindowOverride(
+          liveCaps || serviceCaps || (kind === LLM_KIND ? getCapabilitiesForModel(providerId, modelId) : null),
+          contextOverride
+        );
         if (caps) model.capabilities = caps;
         // Token limits under the snake_case names the OpenAI/OpenRouter
         // convention uses. `capabilities.contextWindow` is camelCase and nested,
@@ -621,7 +663,9 @@ export async function buildModelsList(kindFilter, options = {}) {
         // Emitted at top level because not every client recurses into nested
         // objects; the camelCase `capabilities` block stays for compatibility.
         if (kind === LLM_KIND || allowAsLlm) {
-          let contextWindow = caps?.contextWindow;
+          let contextWindow = Number.isFinite(contextOverride?.contextWindow)
+            ? contextOverride.contextWindow
+            : caps?.contextWindow;
           let maxOutput = caps?.maxOutput;
           // Live-catalog and service-kind capabilities are usually partial
           // (often just { tools: true }), so fill the gaps from the static

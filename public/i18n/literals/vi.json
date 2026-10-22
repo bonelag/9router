@@ -212,5 +212,11 @@
   "No models returned from /models.": "Không có mô hình nào được trả về từ /models.",
   "No new models were added.": "Không có mô hình mới nào được thêm.",
   "Add model": "Thêm mô hình",
-  "Restore model": "Khôi phục mô hình"
+  "Restore model": "Khôi phục mô hình",
+  "Fetch": "Tải lại",
+  "Fetching...": "Đang tải...",
+  "Fetch from server": "Tải lại từ máy chủ",
+  "Fetch models from official server": "Tải lại mô hình từ máy chủ chính thức",
+  "No models available": "Không có mô hình nào",
+  "Delete model": "Xóa mô hình"
 }

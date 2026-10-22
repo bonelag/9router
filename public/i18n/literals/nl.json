@@ -212,5 +212,11 @@
   "No models returned from /models.": "Geen modellen geretourneerd van /models.",
   "No new models were added.": "Geen nieuwe modellen toegevoegd.",
   "Add model": "Model toevoegen",
-  "Restore model": "Model herstellen"
+  "Restore model": "Model herstellen",
+  "Fetch": "Ophalen",
+  "Fetching...": "Ophalen...",
+  "Fetch from server": "Ophalen van server",
+  "Fetch models from official server": "Modellen ophalen van officiële server",
+  "No models available": "Geen modellen beschikbaar",
+  "Delete model": "Model verwijderen"
 }

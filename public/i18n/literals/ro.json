@@ -212,5 +212,11 @@
   "No models returned from /models.": "Niciun model returnat de la /models.",
   "No new models were added.": "Nu a fost adăugat niciun model nou.",
   "Add model": "Adaugă model",
-  "Restore model": "Restaurează modelul"
+  "Restore model": "Restaurează modelul",
+  "Fetch": "Preluare",
+  "Fetching...": "Se preia...",
+  "Fetch from server": "Preluare de pe server",
+  "Fetch models from official server": "Preluare modele de pe serverul oficial",
+  "No models available": "Niciun model disponibil",
+  "Delete model": "Șterge modelul"
 }

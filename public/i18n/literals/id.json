@@ -1400,5 +1400,10 @@
   "Adding...": "Menambahkan...",
   "Model already exists in list": "Model sudah ada dalam daftar",
   "No models returned from /models.": "Tidak ada model yang dikembalikan dari /models.",
-  "No new models were added.": "Tidak ada model baru yang ditambahkan."
+  "No new models were added.": "Tidak ada model baru yang ditambahkan.",
+  "Fetch": "Ambil",
+  "Fetch from server": "Ambil dari server",
+  "Fetch models from official server": "Ambil model dari server resmi",
+  "No models available": "Tidak ada model yang tersedia",
+  "Delete model": "Hapus model"
 }

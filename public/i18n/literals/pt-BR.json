@@ -1142,5 +1142,11 @@
   "Importing...": "Importando...",
   "Model already exists in list": "O modelo já existe na lista",
   "No models returned from /models.": "Nenhum modelo retornado de /models.",
-  "No new models were added.": "Nenhum novo modelo foi adicionado."
+  "No new models were added.": "Nenhum novo modelo foi adicionado.",
+  "Fetch": "Buscar",
+  "Fetching...": "Buscando...",
+  "Fetch from server": "Buscar do servidor",
+  "Fetch models from official server": "Buscar modelos do servidor oficial",
+  "No models available": "Nenhum modelo disponível",
+  "Delete model": "Excluir modelo"
 }

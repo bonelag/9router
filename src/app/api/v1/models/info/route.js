@@ -1,6 +1,7 @@
 import { PROVIDER_MODELS } from "open-sse/config/providerModels.js";
 import { AI_PROVIDERS, ALIAS_TO_ID } from "@/shared/constants/providers";
 import { getModelKind } from "@/shared/constants/models";
+import { getModelOverrides } from "@/lib/modelOverridesDb";
 
 const KIND_ENDPOINT = {
   llm: "/v1/chat/completions",
@@ -100,5 +101,22 @@ export async function GET(request) {
       { status: 404, headers: { "Access-Control-Allow-Origin": "*" } },
     );
   }
+
+  // Per-model context-window override is authoritative over registry metadata.
+  try {
+    const slash = id.indexOf("/");
+    if (slash > 0) {
+      const alias = id.slice(0, slash);
+      const modelId = id.slice(slash + 1);
+      const providerId = ALIAS_TO_ID[alias] || alias;
+      const overrides = await getModelOverrides();
+      const override = overrides[providerId]?.[modelId] || overrides[alias]?.[modelId];
+      if (Number.isFinite(override?.contextWindow)) {
+        info.contextWindow = override.contextWindow;
+        if (info.capabilities) info.capabilities.contextWindow = override.contextWindow;
+      }
+    }
+  } catch {}
+
   return Response.json(info, { headers: { "Access-Control-Allow-Origin": "*" } });
 }

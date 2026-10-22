@@ -212,5 +212,11 @@
   "No models returned from /models.": "/models ei palauttanut yhtään mallia.",
   "No new models were added.": "Uusia malleja ei lisätty.",
   "Add model": "Lisää malli",
-  "Restore model": "Palauta malli"
+  "Restore model": "Palauta malli",
+  "Fetch": "Hae",
+  "Fetching...": "Haetaan...",
+  "Fetch from server": "Hae palvelimelta",
+  "Fetch models from official server": "Hae mallit viralliselta palvelimelta",
+  "No models available": "Ei malleja saatavilla",
+  "Delete model": "Poista malli"
 }

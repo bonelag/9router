@@ -21,6 +21,7 @@ import ConnectionRow from "./ConnectionRow";
 import AddApiKeyModal from "./AddApiKeyModal";
 import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
+import EditModelModal from "./EditModelModal";
 import BulkImportCodexModal from "./BulkImportCodexModal";
 import BulkImportGrokCliModal from "./BulkImportGrokCliModal";
 import CustomConfigCard from "./CustomConfigCard";
@@ -79,6 +80,10 @@ export default function ProviderDetailPage() {
   const [liveModelsError, setLiveModelsError] = useState(null);
   const [kiloFreeModels, setKiloFreeModels] = useState([]);
   const [disabledModelIds, setDisabledModelIds] = useState([]);
+  const [deletedModelIds, setDeletedModelIds] = useState([]);
+  const [modelOverrides, setModelOverrides] = useState({});
+  const [editingModel, setEditingModel] = useState(null);
+  const [fetchingOfficialModels, setFetchingOfficialModels] = useState(false);
   const [confirmState, setConfirmState] = useState(null);
   const [showAgRiskModal, setShowAgRiskModal] = useState(false);
   const [oneByOneRunning, setOneByOneRunning] = useState(false);
@@ -219,6 +224,55 @@ export default function ProviderDetailPage() {
     }
   }, [providerStorageAlias]);
 
+  const fetchDeletedModels = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/models/deleted?providerAlias=${encodeURIComponent(providerStorageAlias)}`, { cache: "no-store" });
+      const data = await res.json();
+      if (res.ok) setDeletedModelIds(data.ids || []);
+    } catch (error) {
+      console.log("Error fetching deleted models:", error);
+    }
+  }, [providerStorageAlias]);
+
+  const fetchModelOverrides = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/models/overrides?providerId=${encodeURIComponent(providerId)}`, { cache: "no-store" });
+      const data = await res.json();
+      if (res.ok) setModelOverrides(data.overrides || {});
+    } catch (error) {
+      console.log("Error fetching model overrides:", error);
+    }
+  }, [providerId]);
+
+  const handleSaveModelOverride = async (modelId, patch) => {
+    const res = await fetch("/api/models/overrides", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providerId, modelId, ...patch }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Failed to save model settings");
+    await fetchModelOverrides();
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("customModelChanged"));
+    }
+  };
+
+  const handleDeleteOfficialModel = async (modelId) => {
+    setDeletedModelIds((prev) => (prev.includes(modelId) ? prev : [...prev, modelId]));
+    try {
+      const res = await fetch("/api/models/deleted", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerAlias: providerStorageAlias, ids: [modelId] }),
+      });
+      if (res.ok) await fetchDeletedModels();
+    } catch (error) {
+      console.log("Error deleting model:", error);
+      await fetchDeletedModels();
+    }
+  };
+
   const handleDisableModel = async (modelId) => {
     setDisabledModelIds((prev) => (prev.includes(modelId) ? prev : [...prev, modelId]));
     try {
@@ -297,6 +351,21 @@ export default function ProviderDetailPage() {
               await handleDeleteAlias(m.alias);
             }
           }
+          const officialIds = Array.from(new Set([
+            ...staticModels.map((m) => m.id),
+            ...modelsList
+              .filter((m) => m.source !== "custom" && m.source !== "alias")
+              .map((m) => m.id),
+          ]));
+          if (officialIds.length > 0) {
+            setDeletedModelIds((prev) => Array.from(new Set([...prev, ...officialIds])));
+            await fetch("/api/models/deleted", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ providerAlias: providerStorageAlias, ids: officialIds }),
+            });
+            await fetchDeletedModels();
+          }
           await fetchCustomModels();
           await fetchAliases();
           await fetchDisabledModels();
@@ -306,6 +375,117 @@ export default function ProviderDetailPage() {
         }
       }
     });
+  };
+
+  const handleFetchOfficialModels = async () => {
+    if (fetchingOfficialModels) return;
+    setFetchingOfficialModels(true);
+    try {
+      const activeConnection = connections.find((conn) => conn.isActive !== false) || connections[0];
+      if (!activeConnection && !isFreeNoAuth) {
+        alert(translate("Please add an active connection first"));
+        return;
+      }
+
+      const fetchTargetId = activeConnection ? activeConnection.id : providerId;
+      const res = await fetch(`/api/providers/${fetchTargetId}/models`, { cache: "no-store" });
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || translate("Failed to fetch models"));
+        return;
+      }
+
+      const serverModels = data.models || [];
+      if (serverModels.length === 0) {
+        alert(data.warning || translate("No models returned"));
+        return;
+      }
+
+      let cleanServerModels = serverModels.map((sm) => {
+        const rawId = sm.id || sm.name || sm.model;
+        if (!rawId) return null;
+        const cleanId = rawId.replace(new RegExp(`^(${providerStorageAlias}|${providerId})/`), "");
+        return {
+          id: cleanId,
+          name: sm.name || sm.displayName || cleanId,
+        };
+      }).filter(Boolean);
+
+      if (providerId === "opencode" || providerStorageAlias === "oc" || providerId === "opencode-free") {
+        cleanServerModels = cleanServerModels.filter((m) => m.id.endsWith("-free") || m.id.includes("-free"));
+      }
+
+      const serverModelIds = new Set(cleanServerModels.map((m) => m.id));
+
+      // 1. Mark any static preset models that DO NOT exist on the server as deleted
+      const presetIdsToDelete = staticModels
+        .map((m) => m.id)
+        .filter((id) => !serverModelIds.has(id));
+
+      if (presetIdsToDelete.length > 0) {
+        await fetch("/api/models/deleted", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ providerAlias: providerStorageAlias, ids: presetIdsToDelete }),
+        });
+      }
+
+      // 2. Un-delete any static models that DO exist on the server
+      const staticIdsToUndelete = staticModels
+        .map((m) => m.id)
+        .filter((id) => serverModelIds.has(id) && deletedModelIds.includes(id));
+
+      if (staticIdsToUndelete.length > 0) {
+        await fetch("/api/models/deleted", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ providerAlias: providerStorageAlias, ids: staticIdsToUndelete }),
+        });
+      }
+
+      // 3. For any server model not present in staticModels, add to customModels if missing
+      const staticIdSet = new Set(staticModels.map((m) => m.id));
+      for (const sm of cleanServerModels) {
+        if (!staticIdSet.has(sm.id)) {
+          const alreadyExists = customModels.some(
+            (entry) => entry.providerAlias === providerStorageAlias && entry.id === sm.id && (entry.kind || entry.type || "llm") === "llm"
+          );
+          if (!alreadyExists) {
+            await fetch("/api/models/custom", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                providerAlias: providerStorageAlias,
+                id: sm.id,
+                type: "llm",
+                name: sm.name,
+              }),
+            });
+          }
+        }
+      }
+
+      // 4. Remove any custom models for this provider that do NOT exist on the server
+      const customToDelete = customModels.filter(
+        (entry) => entry.providerAlias === providerStorageAlias && (entry.kind || entry.type || "llm") === "llm" && !serverModelIds.has(entry.id)
+      );
+      for (const cm of customToDelete) {
+        const params = new URLSearchParams({ providerAlias: providerStorageAlias, id: cm.id, type: "llm" });
+        await fetch(`/api/models/custom?${params}`, { method: "DELETE" });
+      }
+
+      await fetchDeletedModels();
+      await fetchCustomModels();
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("customModelChanged"));
+      }
+    } catch (error) {
+      console.log("Error fetching official models:", error);
+      alert(translate("Error fetching models") + ": " + error.message);
+    } finally {
+      setFetchingOfficialModels(false);
+    }
   };
 
   // Define callbacks BEFORE the useEffect that uses them
@@ -512,7 +692,9 @@ export default function ProviderDetailPage() {
     fetchAliases();
     fetchCustomModels();
     fetchDisabledModels();
-  }, [fetchConnections, fetchAliases, fetchCustomModels, fetchDisabledModels]);
+    fetchDeletedModels();
+    fetchModelOverrides();
+  }, [fetchConnections, fetchAliases, fetchCustomModels, fetchDisabledModels, fetchDeletedModels, fetchModelOverrides]);
 
   // Live per-connection catalogs (cursor, zed): the static registry carries
   // no usable list, so resolve from the active connection. Fires only when
@@ -1215,6 +1397,8 @@ export default function ProviderDetailPage() {
           onDisableAll={handleDisableAll}
           onEnableAll={handleEnableAll}
           onDeleteAll={handleDeleteAllModels}
+          onEditModel={(modelId) => setEditingModel({ id: modelId, name: modelId })}
+          modelOverrides={modelOverrides}
           connections={connections}
           isAnthropic={isAnthropicCompatible}
         />
@@ -1222,10 +1406,13 @@ export default function ProviderDetailPage() {
     }
     // Combine hardcoded models with Kilo free models (deduplicated)
     // Exclude non-llm models (embedding, tts, etc.) — they have dedicated pages under media-providers
+    const deletedSet = new Set(deletedModelIds);
     const allModels = [
       ...models,
       ...kiloFreeModels.filter((fm) => !models.some((m) => m.id === fm.id)),
-    ].filter((m) => { const k = getModelKind(m); return !k || k === "llm"; });
+    ]
+      .filter((m) => { const k = getModelKind(m); return !k || k === "llm"; })
+      .filter((m) => !deletedSet.has(m.id));
     const disabledSet = new Set(disabledModelIds);
     const customModelRows = getProviderCustomModelRows({
       customModels,
@@ -1234,6 +1421,12 @@ export default function ProviderDetailPage() {
       builtInModels: models,
       type: "llm",
     });
+    const getInheritedCaps = (modelId) => getCaps(`${providerStorageAlias}/${modelId}`);
+    const getRowCaps = (modelId) => {
+      const caps = getInheritedCaps(modelId);
+      const contextWindow = modelOverrides[modelId]?.contextWindow;
+      return Number.isFinite(contextWindow) ? { ...(caps || {}), contextWindow } : caps;
+    };
 
     return (
       <div className="flex flex-wrap gap-3">
@@ -1254,6 +1447,13 @@ export default function ProviderDetailPage() {
                 handleDeleteAlias(model.alias);
               }
             }}
+            onDelete={() => {
+              if (model.source === "custom") {
+                handleDeleteCustomModel(model.id, "llm", providerStorageAlias);
+              } else {
+                handleDeleteAlias(model.alias);
+              }
+            }}
             testStatus={modelTestResults[model.id]}
             onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(model.id) : undefined}
             isTesting={testingModelIds.has(model.id)}
@@ -1261,8 +1461,10 @@ export default function ProviderDetailPage() {
             isFree={false}
             isEnabled={!disabledSet.has(model.id)}
             onToggle={(checked) => (checked ? handleEnableModel(model.id) : handleDisableModel(model.id))}
-            caps={getCaps(`${providerId}/${model.id}`)}
-            thinkingSuffix={resolveThinkingSuffix(model.id)}
+            caps={getRowCaps(model.id)}
+            thinkingSuffix={modelOverrides[model.id]?.effort || resolveThinkingSuffix(model.id)}
+            onEdit={() => setEditingModel({ id: model.id, name: model.name })}
+            hasOverride={!!modelOverrides[model.id]}
           />
         ))}
 
@@ -1282,26 +1484,46 @@ export default function ProviderDetailPage() {
               onCopy={copy}
               onSetAlias={(alias) => handleSetAlias(model.id, alias, providerStorageAlias)}
               onDeleteAlias={() => handleDeleteAlias(existingAlias)}
+              onDelete={() => handleDeleteOfficialModel(model.id)}
               testStatus={modelTestResults[model.id]}
               onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(model.id) : undefined}
               isTesting={testingModelIds.has(model.id)}
               isFree={model.isFree}
               isEnabled={!disabledSet.has(model.id)}
               onToggle={(checked) => (checked ? handleEnableModel(model.id) : handleDisableModel(model.id))}
-              caps={getCaps(`${providerId}/${model.id}`)}
-              thinkingSuffix={resolveThinkingSuffix(model.id)}
+              caps={getRowCaps(model.id)}
+              thinkingSuffix={modelOverrides[model.id]?.effort || resolveThinkingSuffix(model.id)}
+              onEdit={() => setEditingModel({ id: model.id, name: model.name })}
+              hasOverride={!!modelOverrides[model.id]}
             />
           );
         })}
 
+        {allModels.length === 0 && customModelRows.length === 0 && (
+          <div className="flex w-full flex-col items-center justify-center rounded-lg border border-dashed border-border p-6 text-center">
+            <span className="material-symbols-outlined text-3xl text-text-muted mb-2">smart_toy</span>
+            <p className="text-xs text-text-muted mb-3">No models available</p>
+            <div className="flex gap-2">
+              <Button size="sm" variant="secondary" icon="download" onClick={handleFetchOfficialModels} disabled={fetchingOfficialModels}>
+                {fetchingOfficialModels ? "Fetching..." : "Fetch from server"}
+              </Button>
+              <Button size="sm" icon="add" onClick={() => setShowAddCustomModel(true)}>
+                Add Model
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Add model button — inline, same style as model chips */}
-        <button
-          onClick={() => setShowAddCustomModel(true)}
-          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-primary/40 px-3 py-2 text-xs text-primary transition-colors hover:border-primary hover:bg-primary/5 sm:w-auto"
-        >
-          <span className="material-symbols-outlined text-sm">add</span>
-          Add Model
-        </button>
+        {(allModels.length > 0 || customModelRows.length > 0) && (
+          <button
+            onClick={() => setShowAddCustomModel(true)}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-primary/40 px-3 py-2 text-xs text-primary transition-colors hover:border-primary hover:bg-primary/5 sm:w-auto"
+          >
+            <span className="material-symbols-outlined text-sm">add</span>
+            Add Model
+          </button>
+        )}
 
         {/* Import Qoder models button — only show for qoder/qoder-cn provider */}
         {(providerId === "qoder" || providerId === "qoder-cn") && connections.some((conn) => conn.isActive !== false) && (
@@ -1621,16 +1843,22 @@ export default function ProviderDetailPage() {
           {connections.length === 0 ? (
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
-                <div className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-primary/10 text-primary shrink-0">
-                  <span className="material-symbols-outlined text-[18px]">{isOAuth ? "lock" : "key"}</span>
+                <div className={`inline-flex items-center justify-center w-9 h-9 rounded-full ${isFreeNoAuth ? "bg-emerald-500/10 text-emerald-500" : "bg-primary/10 text-primary"} shrink-0`}>
+                  <span className="material-symbols-outlined text-[18px]">{isFreeNoAuth ? "public" : isOAuth ? "lock" : "key"}</span>
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm text-text-muted">No connections yet</p>
-                  {hasDualAuthModes && (
+                  <p className="text-sm font-medium text-text-main">
+                    {isFreeNoAuth ? "Free public provider — No connection required" : "No connections yet"}
+                  </p>
+                  {isFreeNoAuth ? (
+                    <p className="text-xs text-text-muted">
+                      Requests route directly to the official free API without credentials.
+                    </p>
+                  ) : hasDualAuthModes ? (
                     <p className="text-xs text-text-muted">
                       Choose {oauthConnectionLabel} or {apiKeyConnectionLabel}.
                     </p>
-                  )}
+                  ) : null}
                 </div>
               </div>
               <div className="flex gap-2">
@@ -1802,21 +2030,53 @@ export default function ProviderDetailPage() {
             )}
           </div>
           {!isCompatible && (() => {
-            const allIds = [
+            const deletedSet = new Set(deletedModelIds);
+            const visibleOfficial = [
               ...models,
               ...kiloFreeModels.filter((fm) => !models.some((m) => m.id === fm.id)),
-            ].filter((m) => { const k = getModelKind(m); return !k || k === "llm"; }).map((m) => m.id);
-            const activeIds = allIds.filter((id) => !disabledModelIds.includes(id));
+            ]
+              .filter((m) => { const k = getModelKind(m); return !k || k === "llm"; })
+              .filter((m) => !deletedSet.has(m.id));
+            const customModelRows = getProviderCustomModelRows({
+              customModels,
+              modelAliases,
+              providerAlias: providerStorageAlias,
+              builtInModels: models,
+              type: "llm",
+            });
+            const totalVisible = [...customModelRows, ...visibleOfficial];
+            const allIds = totalVisible.map((m) => m.id);
+            const visibleActiveIds = allIds.filter((id) => !disabledModelIds.includes(id));
             return (
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon="download"
+                  onClick={handleFetchOfficialModels}
+                  disabled={fetchingOfficialModels}
+                  title="Fetch models from official server"
+                >
+                  {fetchingOfficialModels ? "Fetching..." : "Fetch"}
+                </Button>
                 {disabledModelIds.length > 0 && (
                   <Button size="sm" variant="secondary" icon="restart_alt" onClick={handleEnableAll}>
                     Active All
                   </Button>
                 )}
-                {activeIds.length > 0 && (
-                  <Button size="sm" variant="secondary" icon="block" onClick={() => handleDisableAll(activeIds)}>
+                {visibleActiveIds.length > 0 && (
+                  <Button size="sm" variant="secondary" icon="block" onClick={() => handleDisableAll(visibleActiveIds)}>
                     Disable All
+                  </Button>
+                )}
+                {totalVisible.length > 0 && (
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    icon="delete"
+                    onClick={() => handleDeleteAllModels(totalVisible)}
+                  >
+                    Delete All
                   </Button>
                 )}
               </div>
@@ -1960,6 +2220,18 @@ export default function ProviderDetailPage() {
           onClose={() => setShowAddCustomModel(false)}
         />
       )}
+
+      <EditModelModal
+        key={editingModel ? `edit-model-${editingModel.id}` : "edit-model-closed"}
+        isOpen={!!editingModel}
+        onClose={() => setEditingModel(null)}
+        model={editingModel}
+        connections={connections}
+        override={editingModel ? modelOverrides[editingModel.id] : null}
+        defaultContextWindow={editingModel ? getCaps(`${providerStorageAlias}/${editingModel.id}`)?.contextWindow : undefined}
+        thinkingLevels={editingModel ? getThinkingLevels(providerId, editingModel.id) : null}
+        onSave={handleSaveModelOverride}
+      />
 
       {providerId === "codex" && (
         <BulkImportCodexModal

@@ -212,5 +212,11 @@
   "No models returned from /models.": "لم يتم إرجاع أي نماذج من /models.",
   "No new models were added.": "لم تتم إضافة نماذج جديدة.",
   "Add model": "إضافة نموذج",
-  "Restore model": "استعادة النموذج"
+  "Restore model": "استعادة النموذج",
+  "Fetch": "جلب",
+  "Fetching...": "جارٍ الجلب...",
+  "Fetch from server": "جلب من الخادم",
+  "Fetch models from official server": "جلب النماذج من الخادم الرسمي",
+  "No models available": "لا توجد نماذج متاحة",
+  "Delete model": "حذف النموذج"
 }

@@ -5,7 +5,7 @@ import PropTypes from "prop-types";
 import { Button, Toggle } from "@/shared/components";
 import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
 
-function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias, onTest, testStatus, isTesting, isEnabled = true, onToggle }) {
+function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias, onTest, testStatus, isTesting, isEnabled = true, onToggle, onEdit, hasOverride = false }) {
   const borderColor = testStatus === "ok"
     ? "border-green-500/40"
     : testStatus === "error"
@@ -43,6 +43,20 @@ function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias,
               {copied === `model-${modelId}` ? "Copied!" : "Copy"}
             </span>
           </div>
+          {onEdit && (
+            <div className="relative group/btn">
+              <button
+                onClick={onEdit}
+                className={`p-0.5 hover:bg-sidebar rounded transition-colors ${hasOverride ? "text-primary" : "text-text-muted hover:text-primary"}`}
+                title="Edit model settings"
+              >
+                <span className="material-symbols-outlined text-sm">edit</span>
+              </button>
+              <span className="pointer-events-none absolute top-5 left-1/2 -translate-x-1/2 text-[10px] text-text-muted whitespace-nowrap opacity-0 group-hover/btn:opacity-100 transition-opacity">
+                Edit settings
+              </span>
+            </div>
+          )}
           {onTest && (
             <div className="relative group/btn">
               <button
@@ -93,6 +107,8 @@ CompatibleModelRow.propTypes = {
   isTesting: PropTypes.bool,
   isEnabled: PropTypes.bool,
   onToggle: PropTypes.func,
+  onEdit: PropTypes.func,
+  hasOverride: PropTypes.bool,
 };
 
 export default function CompatibleModelsSection({
@@ -111,6 +127,8 @@ export default function CompatibleModelsSection({
   onDisableAll,
   onEnableAll,
   onDeleteAll,
+  onEditModel,
+  modelOverrides = {},
   connections,
   isAnthropic
 }) {
@@ -351,6 +369,8 @@ export default function CompatibleModelsSection({
                   isTesting={testingModelId === id}
                   isEnabled={isEnabled}
                   onToggle={(checked) => (checked ? onEnableModel?.(id) : onDisableModel?.(id))}
+                  onEdit={onEditModel ? () => onEditModel(id) : undefined}
+                  hasOverride={!!modelOverrides[id]}
                 />
               );
             })
@@ -377,6 +397,8 @@ CompatibleModelsSection.propTypes = {
   onDisableAll: PropTypes.func,
   onEnableAll: PropTypes.func,
   onDeleteAll: PropTypes.func,
+  onEditModel: PropTypes.func,
+  modelOverrides: PropTypes.object,
   connections: PropTypes.arrayOf(PropTypes.shape({
     id: PropTypes.string,
     isActive: PropTypes.bool,

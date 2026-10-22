@@ -18,6 +18,9 @@ export default function ModelRow({
   onToggle,
   caps,
   thinkingSuffix,
+  onDelete,
+  onEdit,
+  hasOverride = false,
 }) {
   const displayModel = thinkingSuffix ? `${fullModel}(${thinkingSuffix})` : fullModel;
   const borderColor = testStatus === "ok"
@@ -78,6 +81,20 @@ export default function ModelRow({
               {copied === `model-${model.id}` ? "Copied!" : "Copy"}
             </span>
           </div>
+          {onEdit && (
+            <div className="relative shrink-0 group/btn">
+              <button
+                onClick={onEdit}
+                className={`rounded p-0.5 transition-opacity hover:bg-sidebar hover:text-primary ${hasOverride ? "text-primary opacity-100" : "text-text-muted opacity-100 sm:opacity-0 sm:group-hover:opacity-100"}`}
+                title="Edit model settings"
+              >
+                <span className="material-symbols-outlined text-sm">edit</span>
+              </button>
+              <span className="pointer-events-none absolute mt-1 top-5 left-1/2 -translate-x-1/2 text-[10px] text-text-muted whitespace-nowrap opacity-0 group-hover/btn:opacity-100 transition-opacity">
+                Edit settings
+              </span>
+            </div>
+          )}
           {onToggle && (
             <Toggle
               size="sm"
@@ -86,7 +103,15 @@ export default function ModelRow({
               className="shrink-0"
             />
           )}
-          {isCustom ? (
+          {onDelete ? (
+            <button
+              onClick={onDelete}
+              className="p-1 hover:bg-red-50 dark:hover:bg-red-500/10 rounded text-red-500 transition-colors shrink-0"
+              title="Delete model"
+            >
+              <span className="material-symbols-outlined text-sm">delete</span>
+            </button>
+          ) : isCustom ? (
             <button
               onClick={onDeleteAlias}
               className="p-1 hover:bg-red-50 dark:hover:bg-red-500/10 rounded text-red-500 transition-colors shrink-0"
@@ -128,4 +153,7 @@ ModelRow.propTypes = {
   onToggle: PropTypes.func,
   caps: PropTypes.object,
   thinkingSuffix: PropTypes.string,
+  onDelete: PropTypes.func,
+  onEdit: PropTypes.func,
+  hasOverride: PropTypes.bool,
 };

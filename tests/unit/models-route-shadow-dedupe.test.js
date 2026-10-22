@@ -22,6 +22,12 @@ vi.mock("@/models", () => ({
 vi.mock("@/lib/disabledModelsDb", () => ({
   getDisabledModels: vi.fn(async () => ({})),
 }));
+vi.mock("@/lib/deletedModelsDb", () => ({
+  getDeletedModels: vi.fn(async () => ({})),
+}));
+vi.mock("@/lib/modelOverridesDb", () => ({
+  getModelOverrides: vi.fn(async () => ({})),
+}));
 
 import { GET } from "@/app/api/models/route.js";
 import { getCustomModels } from "@/models";
@@ -71,5 +77,14 @@ describe("/api/models — custom-model shadow dedupe", () => {
     // the 200k floor.
     expect(kept.caps.contextWindow).toBe(1000000);
     expect(kept.caps.maxOutput).toBe(384000);
+  });
+
+  it("resolves built-in caps by provider id, matching /v1/models", async () => {
+    const models = await fetchModels();
+    const codex = models.find((m) => m.routedModel === "cx/gpt-6-luna");
+    expect(codex).toBeDefined();
+    // `cx` is the UI alias; the Codex provider entry (272k) must win over the
+    // generic *gpt-6* pattern (1.05M) that /v1/models does not use either.
+    expect(codex.caps.contextWindow).toBe(272000);
   });
 });

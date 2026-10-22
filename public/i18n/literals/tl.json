@@ -212,5 +212,11 @@
   "No models returned from /models.": "Walang modelong ibinalik mula sa /models.",
   "No new models were added.": "Walang mga bagong modelong idinagdag.",
   "Add model": "Magdagdag ng modelo",
-  "Restore model": "Ibalik ang modelo"
+  "Restore model": "Ibalik ang modelo",
+  "Fetch": "Kunin",
+  "Fetching...": "Kinukuha...",
+  "Fetch from server": "Kunin mula sa server",
+  "Fetch models from official server": "Kunin ang mga modelo mula sa opisyal na server",
+  "No models available": "Walang available na modelo",
+  "Delete model": "Tanggalin ang modelo"
 }

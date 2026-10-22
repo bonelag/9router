@@ -1,5 +1,6 @@
 import { PROVIDER_MODELS } from "@/shared/constants/models";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
+import { getDeletedModels } from "@/lib/deletedModelsDb";
 import { getProviderAlias } from "@/shared/constants/providers";
 
 /**
@@ -22,6 +23,7 @@ export async function OPTIONS() {
 export async function GET() {
   try {
     const disabled = await getDisabledModels();
+    const deleted = await getDeletedModels();
     const models = [];
     const seen = new Set();
 
@@ -40,8 +42,10 @@ export async function GET() {
     
     for (const [provider, providerModels] of Object.entries(PROVIDER_MODELS)) {
       const alias = getProviderAlias(provider) || provider;
+      const delList = deleted[alias] || deleted[provider] || [];
       const list = disabled[alias] || disabled[provider] || [];
       for (const model of providerModels) {
+        if (delList.includes(model.id)) continue;
         if (list.includes(model.id)) continue;
         addModel({
           name: `models/${provider}/${model.id}`,

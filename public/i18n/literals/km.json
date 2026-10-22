@@ -1405,5 +1405,10 @@
   "Adding...": "កំពុងបន្ថែម...",
   "Model already exists in list": "គំរូមានរួចហើយនៅក្នុងបញ្ជី",
   "No models returned from /models.": "គ្មានគំរូត្រឡប់មកវិញពី /models ទេ។",
-  "No new models were added.": "គ្មានគំរូថ្មីត្រូវបានបន្ថែមទេ។"
+  "No new models were added.": "គ្មានគំរូថ្មីត្រូវបានបន្ថែមទេ។",
+  "Fetch": "ទាញយក",
+  "Fetch from server": "ទាញយកពីម៉ាស៊ីនបម្រើ",
+  "Fetch models from official server": "ទាញយកគំរូពីម៉ាស៊ីនបម្រើផ្លូវការ",
+  "No models available": "គ្មានគំរូដែលអាចប្រើបានទេ",
+  "Delete model": "លុបគំរូ"
 }

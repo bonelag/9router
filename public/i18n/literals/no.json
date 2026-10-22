@@ -212,5 +212,11 @@
   "No models returned from /models.": "Ingen modeller returnert fra /models.",
   "No new models were added.": "Ingen nye modeller ble lagt til.",
   "Add model": "Legg til modell",
-  "Restore model": "Gjenopprett modell"
+  "Restore model": "Gjenopprett modell",
+  "Fetch": "Hent",
+  "Fetching...": "Henter...",
+  "Fetch from server": "Hent fra server",
+  "Fetch models from official server": "Hent modeller fra den offisielle serveren",
+  "No models available": "Ingen tilgjengelige modeller",
+  "Delete model": "Slett modell"
 }

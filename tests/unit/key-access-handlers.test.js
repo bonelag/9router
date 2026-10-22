@@ -25,6 +25,10 @@ vi.mock("@/lib/localDb", () => ({
   getCustomModels: async () => [],
 }));
 vi.mock("@/lib/disabledModelsDb", () => ({ getDisabledModels: async () => ({}) }));
+vi.mock("@/lib/modelOverridesDb", () => ({
+  getModelOverride: async () => null,
+  getModelOverrides: async () => ({}),
+}));
 vi.mock("@/lib/db/repos/combosRepo.js", () => ({ getCombos: async () => fx.combos }));
 vi.mock("@/lib/db/repos/apiKeysRepo.js", () => ({ getApiKeyByKey: async (k) => fx.keys[k] || null }));
 vi.mock("@/lib/usageDb.js", () => ({ saveRequestUsage: vi.fn() }));

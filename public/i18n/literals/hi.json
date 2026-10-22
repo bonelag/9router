@@ -212,5 +212,11 @@
   "No models returned from /models.": "/models से कोई मॉडल नहीं मिला।",
   "No new models were added.": "कोई नया मॉडल नहीं जोड़ा गया।",
   "Add model": "मॉडल जोड़ें",
-  "Restore model": "मॉडल पुनर्स्थापित करें"
+  "Restore model": "मॉडल पुनर्स्थापित करें",
+  "Fetch": "प्राप्त करें",
+  "Fetching...": "प्राप्त किया जा रहा है...",
+  "Fetch from server": "सर्वर से प्राप्त करें",
+  "Fetch models from official server": "आधिकारिक सर्वर से मॉडल प्राप्त करें",
+  "No models available": "कोई मॉडल उपलब्ध नहीं है",
+  "Delete model": "मॉडल हटाएं"
 }

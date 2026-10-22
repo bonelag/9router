@@ -23,6 +23,11 @@ describe("useModelCaps resolveCaps — alias → provider id in the fallback", (
     expect(caps.maxOutput).toBe(384000);
   });
 
+  it("cx/gpt-6-luna resolves through codex, not the generic *gpt-6* pattern", () => {
+    const caps = resolveCaps({}, {}, "cx/gpt-6-luna");
+    expect(caps.contextWindow).toBe(272000);
+  });
+
   it("byFull hit still wins over the fallback", () => {
     const fed = { contextWindow: 555000 };
     const caps = resolveCaps({ "ocg/claude-haiku-5-5": fed }, {}, "ocg/claude-haiku-5-5");

@@ -212,5 +212,11 @@
   "No models returned from /models.": "לא הוחזרו מודלים מ-/models.",
   "No new models were added.": "לא נוספו מודלים חדשים.",
   "Add model": "הוסף מודל",
-  "Restore model": "שחזר מודל"
+  "Restore model": "שחזר מודל",
+  "Fetch": "אחזר",
+  "Fetching...": "מאחזר...",
+  "Fetch from server": "אחזר מהשרת",
+  "Fetch models from official server": "אחזר מודלים מהשרת הרשמי",
+  "No models available": "אין מודלים זמינים",
+  "Delete model": "מחק מודל"
 }

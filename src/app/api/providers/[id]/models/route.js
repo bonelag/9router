@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getProviderConnectionById } from "@/models";
-import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, FREE_PROVIDERS } from "@/shared/constants/providers";
 import { GEMINI_CONFIG, ZED_HOSTED_CONFIG } from "@/lib/oauth/constants/oauth";
 import { refreshGoogleToken, refreshCodexToken, updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { resolveOllamaLocalHost } from "open-sse/config/providers.js";
@@ -143,17 +143,19 @@ const buildOAuthResolver = ({ refreshFn, fetchFn, parseFn, errorLabel }) => asyn
     if (response.ok) {
       const data = await response.json();
       const models = parseFn(data);
-      if (models.length > 0) return { models };
+      if (models && models.length > 0) return { models };
+      return { models: [], warning: `${errorLabel}: No models returned from server` };
     } else {
       const errorText = await response.text();
       warning = `${errorLabel}: ${response.status} ${errorText}`;
-      console.log(`${errorLabel} (falling back to static):`, errorText);
+      console.log(`${errorLabel}:`, response.status, errorText);
+      return { error: warning, status: response.status };
     }
   } catch (error) {
     warning = `${errorLabel}: ${error.message}`;
-    console.log(`${errorLabel} (falling back to static):`, error.message);
+    console.log(`${errorLabel}:`, error.message);
+    return { error: warning, status: 500 };
   }
-  return { models: [], warning };
 };
 
 // Qoder shares one resolver across intl (qoder) and CN (qoder-cn); the
@@ -209,6 +211,27 @@ const PROVIDER_MODELS_CONFIG = {
     authPrefix: "Bearer ",
     parseResponse: (data) => data.data || [],
   },
+  opencode: {
+    url: "https://opencode.ai/zen/v1/models",
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      "x-opencode-client": "desktop",
+      "User-Agent": "opencode/1.18.31",
+    },
+    noAuth: true,
+    parseResponse: (data) =>
+      (data?.data || data?.models || [])
+        .filter((m) => {
+          const id = m.id || m.name || "";
+          return id.endsWith("-free") || id.includes("-free");
+        })
+        .map((m) => ({
+          id: m.id || m.name,
+          name: m.name || m.id,
+          ...m,
+        })),
+  },
   claude: {
     url: "https://api.anthropic.com/v1/models",
     method: "GET",
@@ -224,7 +247,14 @@ const PROVIDER_MODELS_CONFIG = {
     method: "GET",
     headers: { "Content-Type": "application/json" },
     authQuery: "key", // Use query param for API key
-    parseResponse: (data) => data.models || []
+    parseResponse: (data) => (data.models || []).map((m) => {
+      const id = (m.name || m.id || "").replace(/^models\//, "");
+      return {
+        id,
+        name: m.displayName || id,
+        ...m,
+      };
+    }),
   },
   codex: {
     customResolver: buildOAuthResolver({
@@ -258,16 +288,7 @@ const PROVIDER_MODELS_CONFIG = {
           body: JSON.stringify(body),
         });
       },
-      parseFn: (data) => {
-        const live = parseGeminiCliModels(data);
-        const staticModels = getStaticProviderModels("antigravity");
-        if (live.length > 0) {
-          const liveIds = new Set(live.map((m) => m.id));
-          const aliases = staticModels.filter((m) => !liveIds.has(m.id) && m.upstreamModelId);
-          return [...aliases, ...live];
-        }
-        return staticModels;
-      },
+      parseFn: parseGeminiCliModels,
       errorLabel: "Failed to fetch Antigravity models",
     }),
   },
@@ -380,8 +401,8 @@ const PROVIDER_MODELS_CONFIG = {
         return { models: result.models };
       }
       return {
-        models: getStaticProviderModels("kimchi"),
-        warning: "Kimchi returned no live models; falling back to static catalog.",
+        models: [],
+        warning: result?.warning || "Kimchi returned no live models.",
       };
     }
   },
@@ -393,8 +414,8 @@ const PROVIDER_MODELS_CONFIG = {
       }, { forceRefresh: true, log: console });
       if (result?.models?.length) return { models: result.models };
       return {
-        models: getStaticProviderModels("cursor"),
-        warning: "Cursor returned no live models; falling back to static catalog.",
+        models: [],
+        warning: "Cursor returned no live models.",
       };
     },
   },
@@ -449,8 +470,8 @@ const PROVIDER_MODELS_CONFIG = {
       });
       if (result?.models?.length) return { models: result.models };
       return {
-        models: getStaticProviderModels("cline"),
-        warning: "Cline returned no live models; falling back to static catalog.",
+        models: [],
+        warning: "Cline returned no live models.",
       };
     },
   },
@@ -462,8 +483,8 @@ const PROVIDER_MODELS_CONFIG = {
       });
       if (result?.models?.length) return { models: result.models };
       return {
-        models: getStaticProviderModels("clinepass"),
-        warning: "ClinePass returned no live models; falling back to static catalog.",
+        models: [],
+        warning: "ClinePass returned no live models.",
       };
     },
   },
@@ -560,8 +581,8 @@ const PROVIDER_MODELS_CONFIG = {
       });
       if (result.models.length) return result;
       return {
-        models: getStaticProviderModels("grok-cli"),
-        warning: result.warning || "Grok CLI returned no live models; using static catalog.",
+        models: [],
+        warning: result.warning || "Grok CLI returned no live models.",
       };
     },
   },
@@ -589,10 +610,18 @@ const PROVIDER_MODELS_CONFIG = {
 export async function GET(request, { params }) {
   try {
     const { id } = await params;
-    const connection = await getProviderConnectionById(id);
+    let connection = await getProviderConnectionById(id);
 
     if (!connection) {
-      return NextResponse.json({ error: "Connection not found" }, { status: 404 });
+      if (FREE_PROVIDERS[id]?.noAuth || id === "opencode") {
+        connection = {
+          id: "noauth",
+          provider: id,
+          isActive: true,
+        };
+      } else {
+        return NextResponse.json({ error: "Connection not found" }, { status: 404 });
+      }
     }
 
     if (isOpenAICompatibleProvider(connection.provider)) {
@@ -687,19 +716,19 @@ export async function GET(request, { params }) {
 
     // Get auth token
     const token = connection.providerSpecificData?.copilotToken || connection.accessToken || connection.apiKey;
-    if (!token) {
+    if (!token && !config.noAuth) {
       return NextResponse.json({ error: "No valid token found" }, { status: 401 });
     }
 
     // Build request URL
     let url = config.url;
-    if (config.authQuery) {
+    if (config.authQuery && token) {
       url += `?${config.authQuery}=${token}`;
     }
 
     // Build headers
     const headers = { ...config.headers };
-    if (config.authHeader && !config.authQuery) {
+    if (config.authHeader && !config.authQuery && token) {
       headers[config.authHeader] = (config.authPrefix || "") + token;
     }
 

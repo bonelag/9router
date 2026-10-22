@@ -1400,5 +1400,10 @@
   "Adding...": "กำลังเพิ่ม...",
   "Model already exists in list": "มีโมเดลนี้ในรายการแล้ว",
   "No models returned from /models.": "ไม่มีโมเดลที่ส่งกลับมาจาก /models",
-  "No new models were added.": "ไม่ได้เพิ่มโมเดลใหม่"
+  "No new models were added.": "ไม่ได้เพิ่มโมเดลใหม่",
+  "Fetch": "ดึงข้อมูล",
+  "Fetch from server": "ดึงข้อมูลจากเซิร์ฟเวอร์",
+  "Fetch models from official server": "ดึงข้อมูลโมเดลจากเซิร์ฟเวอร์ทางการ",
+  "No models available": "ไม่มีโมเดลที่ใช้งานได้",
+  "Delete model": "ลบโมเดล"
 }

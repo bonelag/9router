@@ -57,6 +57,17 @@ export {
   getDisabledModels, getDisabledByProvider, disableModels, enableModels,
 } from "./repos/disabledModelsRepo.js";
 
+// Deleted models
+export {
+  getDeletedModels, getDeletedByProvider, deleteOfficialModels, restoreOfficialModels,
+} from "./repos/deletedModelsRepo.js";
+
+// Per-model overrides (context window / effort / account selection)
+export {
+  getModelOverrides, getOverridesByProvider, getModelOverride,
+  setModelOverride, deleteModelOverride,
+} from "./repos/modelOverridesRepo.js";
+
 // Usage
 export {
   statsEmitter, trackPendingRequest, getActiveRequests,

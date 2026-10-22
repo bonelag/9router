@@ -11,6 +11,7 @@ import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../service
 import { getSettings } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
+import { getModelOverride } from "@/lib/modelOverridesDb";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { getTransform as getPxpipeTransform } from "@/lib/pxpipe/loader.js";
 import { appendPxpipeEvent } from "@/lib/pxpipe/events.js";
@@ -232,6 +233,19 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
   const { provider, model } = modelInfo;
 
+  // Per-model overrides (context window / effort / account selection). The
+  // effort override is applied in chatCore (highest priority over client and
+  // provider-level settings); account IDs restrict this model's credentials.
+  let modelOverride = null;
+  try {
+    modelOverride = await getModelOverride(provider, model);
+  } catch (error) {
+    log.warn("AUTH", `Failed to read model override for ${provider}/${model}: ${error.message}`);
+  }
+  const allowedConnectionIds = Array.isArray(modelOverride?.accountIds) && modelOverride.accountIds.length
+    ? modelOverride.accountIds
+    : null;
+
   // Routing shown in the unified "▶" line (client model → provider/model)
 
   // Extract userAgent from request
@@ -244,7 +258,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastHeaders = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model });
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
+      requestedModel: requestedModel || model,
+      allowedConnectionIds,
+    });
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {
@@ -304,6 +321,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       pxpipeTransform: chatSettings.pxpipeEnabled ? await getPxpipeTransform() : null,
       onPxpipeEvent: appendPxpipeEvent,
       providerThinking,
+      // Per-model config (effort override) applied inside chatCore
+      modelOverride,
       // Per-provider user overrides (custom headers / connect timeout) from settings
       providerOverrides: (chatSettings.providerOverrides || {})[provider] || null,
       // Detect source format by endpoint + body

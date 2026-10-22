@@ -212,5 +212,11 @@
   "No models returned from /models.": "A /models nem adott vissza modellt.",
   "No new models were added.": "Nem lett új modell hozzáadva.",
   "Add model": "Modell hozzáadása",
-  "Restore model": "Modell visszaállítása"
+  "Restore model": "Modell visszaállítása",
+  "Fetch": "Lekérés",
+  "Fetching...": "Lekérés...",
+  "Fetch from server": "Lekérés a szerverről",
+  "Fetch models from official server": "Modellek lekérése a hivatalos szerverről",
+  "No models available": "Nincsenek elérhető modellek",
+  "Delete model": "Modell törlése"
 }

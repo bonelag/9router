@@ -212,5 +212,11 @@
   "No models returned from /models.": "Из /models не возвращено ни одной модели.",
   "No new models were added.": "Новые модели не добавлены.",
   "Add model": "Добавить модель",
-  "Restore model": "Восстановить модель"
+  "Restore model": "Восстановить модель",
+  "Fetch": "Получить",
+  "Fetching...": "Получение...",
+  "Fetch from server": "Получить с сервера",
+  "Fetch models from official server": "Получить модели с официального сервера",
+  "No models available": "Нет доступных моделей",
+  "Delete model": "Удалить модель"
 }

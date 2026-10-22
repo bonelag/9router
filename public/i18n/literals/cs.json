@@ -212,5 +212,11 @@
   "No models returned from /models.": "Z /models nebyly vráceny žádné modely.",
   "No new models were added.": "Nebyly přidány žádné nové modely.",
   "Add model": "Přidat model",
-  "Restore model": "Obnovit model"
+  "Restore model": "Obnovit model",
+  "Fetch": "Načíst",
+  "Fetching...": "Načítání...",
+  "Fetch from server": "Načíst ze serveru",
+  "Fetch models from official server": "Načíst modely z oficiálního serveru",
+  "No models available": "Nejsou k dispozici žádné modely",
+  "Delete model": "Smazat model"
 }

@@ -212,5 +212,11 @@
   "No models returned from /models.": "Ingen modeller returneret fra /models.",
   "No new models were added.": "Der blev ikke tilføjet nye modeller.",
   "Add model": "Tilføj model",
-  "Restore model": "Gendan model"
+  "Restore model": "Gendan model",
+  "Fetch": "Hent",
+  "Fetching...": "Henter...",
+  "Fetch from server": "Hent fra server",
+  "Fetch models from official server": "Hent modeller fra den officielle server",
+  "No models available": "Ingen tilgængelige modeller",
+  "Delete model": "Slet model"
 }

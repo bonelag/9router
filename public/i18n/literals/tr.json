@@ -212,5 +212,11 @@
   "No models returned from /models.": "/models uç noktasından model dönmedi.",
   "No new models were added.": "Yeni model eklenmedi.",
   "Add model": "Model ekle",
-  "Restore model": "Modeli geri yükle"
+  "Restore model": "Modeli geri yükle",
+  "Fetch": "Getir",
+  "Fetching...": "Getiriliyor...",
+  "Fetch from server": "Sunucudan getir",
+  "Fetch models from official server": "Modelleri resmi sunucudan getir",
+  "No models available": "Kullanılabilir model yok",
+  "Delete model": "Modeli sil"
 }

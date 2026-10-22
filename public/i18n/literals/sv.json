@@ -212,5 +212,11 @@
   "No models returned from /models.": "Inga modeller returnerades från /models.",
   "No new models were added.": "Inga nya modeller lades till.",
   "Add model": "Lägg till modell",
-  "Restore model": "Återställ modell"
+  "Restore model": "Återställ modell",
+  "Fetch": "Hämta",
+  "Fetching...": "Hämtar...",
+  "Fetch from server": "Hämta från server",
+  "Fetch models from official server": "Hämta modeller från den officiella servern",
+  "No models available": "Inga modeller tillgängliga",
+  "Delete model": "Radera modell"
 }

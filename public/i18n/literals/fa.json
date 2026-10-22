@@ -1416,5 +1416,10 @@
   "Adding...": "در حال افزودن...",
   "Model already exists in list": "مدل قبلاً در لیست وجود دارد",
   "No models returned from /models.": "هیچ مدلی از /models برگردانده نشد.",
-  "No new models were added.": "مدل جدیدی اضافه نشد."
+  "No new models were added.": "مدل جدیدی اضافه نشد.",
+  "Fetch": "دریافت",
+  "Fetch from server": "دریافت از سرور",
+  "Fetch models from official server": "دریافت مدل‌ها از سرور رسمی",
+  "No models available": "هیچ مدلی در دسترس نیست",
+  "Delete model": "حذف مدل"
 }

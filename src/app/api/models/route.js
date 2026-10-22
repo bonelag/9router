@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getModelAliases, setModelAlias, getCustomModels } from "@/models";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
+import { getDeletedModels } from "@/lib/deletedModelsDb";
+import { getModelOverrides } from "@/lib/modelOverridesDb";
 import { AI_MODELS } from "@/shared/constants/config";
 import { getProviderAlias, ALIAS_TO_ID } from "@/shared/constants/providers";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
@@ -10,10 +12,18 @@ export async function GET() {
   try {
     const modelAliases = await getModelAliases();
     const disabled = await getDisabledModels();
+    const deleted = await getDeletedModels();
+    const overrides = await getModelOverrides();
+    const getOverride = (providerAlias, modelId) => {
+      const providerId = ALIAS_TO_ID[providerAlias] || providerAlias;
+      return overrides[providerId]?.[modelId] || overrides[providerAlias]?.[modelId] || null;
+    };
 
     const models = AI_MODELS
       .filter((m) => {
         const alias = getProviderAlias(m.provider) || m.provider;
+        const delList = deleted[alias] || deleted[m.provider] || [];
+        if (delList.includes(m.model)) return false;
         const list = disabled[alias] || disabled[m.provider] || [];
         return !list.includes(m.model);
       })
@@ -21,7 +31,9 @@ export async function GET() {
         const fullModel = `${m.provider}/${m.model}`;
         const providerAlias = getProviderAlias(m.provider) || m.provider;
         const routedModel = `${providerAlias}/${m.model}`;
-        const c = getCapabilitiesForModel(m.provider, m.model);
+        const providerId = ALIAS_TO_ID[m.provider] || m.provider;
+        const c = getCapabilitiesForModel(providerId, m.model);
+        const override = getOverride(providerId, m.model);
         return {
           ...m,
           fullModel,
@@ -31,7 +43,7 @@ export async function GET() {
             vision: c.vision,
             search: c.search,
             reasoning: c.reasoning,
-            contextWindow: c.contextWindow,
+            contextWindow: Number.isFinite(override?.contextWindow) ? override.contextWindow : c.contextWindow,
             maxOutput: c.maxOutput,
           },
         };
@@ -59,6 +71,7 @@ export async function GET() {
       const fullModel = `${m.providerAlias}/${m.id}`;
       const providerId = ALIAS_TO_ID[m.providerAlias] || m.providerAlias;
       const c = getCapabilitiesForModel(providerId, m.id);
+      const override = getOverride(m.providerAlias, m.id);
       models.push({
         provider: m.providerAlias,
         model: m.id,
@@ -73,6 +86,7 @@ export async function GET() {
           contextWindow: c.contextWindow,
           maxOutput: c.maxOutput,
           ...(m.caps || {}),
+          ...(Number.isFinite(override?.contextWindow) ? { contextWindow: override.contextWindow } : {}),
         },
       });
     }

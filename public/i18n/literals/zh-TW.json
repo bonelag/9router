@@ -212,5 +212,11 @@
   "No models returned from /models.": "從 /models 未傳回任何模型。",
   "No new models were added.": "未新增新模型。",
   "Add model": "新增模型",
-  "Restore model": "恢復模型"
+  "Restore model": "恢復模型",
+  "Fetch": "獲取",
+  "Fetching...": "正在獲取...",
+  "Fetch from server": "從伺服器獲取",
+  "Fetch models from official server": "從官方伺服器獲取模型",
+  "No models available": "沒有可用模型",
+  "Delete model": "刪除模型"
 }

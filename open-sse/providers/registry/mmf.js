@@ -11,7 +11,7 @@ export default {
   category: "apikey",
   transport: {
     baseUrl: "https://api.xiaomimimo.com/api/free-ai/openai/chat",
-    noAuth: true,
+    noAuth: false,
   },
   models: [
     { id: "mimo-auto", name: "MiMo Auto" },

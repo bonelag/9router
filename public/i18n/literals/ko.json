@@ -212,5 +212,11 @@
   "No models returned from /models.": "/models에서 반환된 모델이 없습니다.",
   "No new models were added.": "새 모델이 추가되지 않았습니다.",
   "Add model": "모델 추가",
-  "Restore model": "모델 복원"
+  "Restore model": "모델 복원",
+  "Fetch": "가져오기",
+  "Fetching...": "가져오는 중...",
+  "Fetch from server": "서버에서 가져오기",
+  "Fetch models from official server": "공식 서버에서 모델 가져오기",
+  "No models available": "사용 가능한 모델이 없습니다",
+  "Delete model": "모델 삭제"
 }

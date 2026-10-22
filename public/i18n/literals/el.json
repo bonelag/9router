@@ -212,5 +212,11 @@
   "No models returned from /models.": "Δεν επιστράφηκαν μοντέλα από το /models.",
   "No new models were added.": "Δεν προστέθηκαν νέα μοντέλα.",
   "Add model": "Προσθήκη μοντέλου",
-  "Restore model": "Επαναφορά μοντέλου"
+  "Restore model": "Επαναφορά μοντέλου",
+  "Fetch": "Ανάκτηση",
+  "Fetching...": "Ανάκτηση...",
+  "Fetch from server": "Ανάκτηση από διακομιστή",
+  "Fetch models from official server": "Ανάκτηση μοντέλων από τον επίσημο διακομιστή",
+  "No models available": "Δεν υπάρχουν διαθέσιμα μοντέλα",
+  "Delete model": "Διαγραφή μοντέλου"
 }
