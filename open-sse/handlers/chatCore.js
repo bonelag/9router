@@ -112,18 +112,6 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (useTransport && credentials) credentials.runtimeTransport = useTransport;
   const stripList = getModelStrip(alias, model);
 
-  // Per-model effort override is the highest priority setting: it must beat the
-  // client's thinking fields, the "(level)" model suffix and provider-level
-  // thinking config. Reuse the existing suffix mechanism so every translator /
-  // executor family applies it natively.
-  const baseUpstreamModel = stripThinkingSuffix(upstreamModel);
-  const effortOverride = (() => {
-    const effort = typeof modelOverride?.effort === "string" ? modelOverride.effort.trim().toLowerCase() : "";
-    if (!effort) return null;
-    return parseSuffix(`${baseUpstreamModel}(${effort})`).override ? effort : null;
-  })();
-  const effectiveUpstreamModel = effortOverride ? `${baseUpstreamModel}(${effortOverride})` : upstreamModel;
-
   // Inject provider-level thinking config override (only if client hasn't set)
   // on/off → extended type (body.thinking), none/low/medium/high → effort type (body.reasoning_effort)
   if (providerThinking?.mode && providerThinking.mode !== "auto") {
@@ -139,6 +127,18 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   }
 
   const upstreamModel = getModelUpstreamId(alias, model, body);
+
+  // Per-model effort override is the highest priority setting: it must beat the
+  // client's thinking fields, the "(level)" model suffix and provider-level
+  // thinking config. Reuse the existing suffix mechanism so every translator /
+  // executor family applies it natively.
+  const baseUpstreamModel = stripThinkingSuffix(upstreamModel);
+  const effortOverride = (() => {
+    const effort = typeof modelOverride?.effort === "string" ? modelOverride.effort.trim().toLowerCase() : "";
+    if (!effort) return null;
+    return parseSuffix(`${baseUpstreamModel}(${effort})`).override ? effort : null;
+  })();
+  const effectiveUpstreamModel = effortOverride ? `${baseUpstreamModel}(${effortOverride})` : upstreamModel;
 
   // Per-request opt-out: client can bypass all token savers via header
   const tokenSaverEnabled = clientRawRequest?.headers?.[TOKEN_SAVER_HEADER]?.toLowerCase() !== "off";
