@@ -1,6 +1,8 @@
 import { buildModelsList } from "../route.js";
 import { adaptModelsResponse, adaptSingleModelResponse, detectModelsClient, CLIENT_TYPES } from "../clientAdapters.js";
 import { getKeyAccessContext, filterModelsListForKey } from "@/sse/services/keyAccess.js";
+import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
+import { resolveClaudeGatewayAlias } from "open-sse/utils/claudeGatewayAlias.js";
 
 // URL slug → service kind(s). `web` covers both webSearch and webFetch.
 const KIND_SLUG_MAP = {
@@ -60,7 +62,15 @@ export async function GET(request, { params }) {
     // Match the same LLM catalog exposed by GET /v1/models. A catch-all
     // parameter is required because provider-prefixed IDs contain a slash.
     const models = await filterModelsListForKey(keyAccess, await buildModelsList([LLM_KIND]));
-    const matchedModel = models.find((candidate) => candidate.id === identifier);
+    const { model: rawId } = stripModelContextMarker(identifier);
+    const resolvedId = resolveClaudeGatewayAlias(rawId);
+    let matchedModel = models.find(
+      (candidate) => candidate.id === identifier || candidate.id === resolvedId || candidate.id === rawId
+    );
+
+    if (matchedModel) {
+      matchedModel = { ...matchedModel, id: identifier };
+    }
 
     if (!matchedModel) {
       return json(

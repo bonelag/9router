@@ -1,13 +1,29 @@
 import crypto from "crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { MEMORY_CONFIG } from "../config/runtimeConfig.js";
 import { getThinkingLevels } from "../providers/thinkingLevels.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
-import { resolveSessionId } from "../utils/sessionManager.js";
+import { resolveSessionId, clearSessionStore } from "../utils/sessionManager.js";
 import { isMuseSparkModel } from "../providers/models/helpers.js";
 import { applyFingerprintTools } from "../utils/opencodeFingerprint.js";
 import { ANTHROPIC_API_VERSION } from "../providers/shared.js";
+
+function resolveDataDir() {
+  const configured = process.env.DATA_DIR;
+  if (configured && !(process.platform === "win32" && /^\//.test(configured))) {
+    return configured;
+  }
+  if (process.platform === "win32") {
+    return path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "9router");
+  }
+  return path.join(os.homedir(), ".9router");
+}
+
+const DATA_DIR = resolveDataDir();
 import {
   normalizeResponsesInput,
   clampResponsesCallId,
@@ -39,6 +55,52 @@ const MESSAGES_MODELS = new Set(["union-alpha"]);
 
 let lastTimestamp = 0;
 let counter = 0;
+
+// Upstream accounts free-tier quota per session, so an explicit reset has to
+// survive a restart — otherwise the next boot falls back to the deterministic
+// pre-reset id and the exhausted quota returns. Persisted in DATA_DIR.
+const SESSION_STATE_FILE = path.join(DATA_DIR, "opencode-session.json");
+
+function readPersistedSession() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(SESSION_STATE_FILE, "utf8"));
+    const sessionId = typeof parsed?.sessionId === "string" ? parsed.sessionId.trim() : "";
+    return OPENCODE_SESSION_RE.test(sessionId) ? sessionId : null;
+  } catch {
+    return null;
+  }
+}
+
+let persistedSessionId = readPersistedSession();
+// Salt keeps hint-derived sessions (translateSessionId) in step with the reset.
+let opencodeSessionSalt = persistedSessionId ? persistedSessionId.slice(4) : "";
+
+export function resetOpencodeSession() {
+  const sessionId = generateSessionId();
+  opencodeSessionSalt = sessionId.slice(4);
+  persistedSessionId = sessionId;
+  stableOpencodeSessions.clear();
+  try {
+    clearSessionStore();
+  } catch {
+    // Session manager cleanup is best-effort.
+  }
+  try {
+    fs.mkdirSync(path.dirname(SESSION_STATE_FILE), { recursive: true });
+    fs.writeFileSync(SESSION_STATE_FILE, JSON.stringify({ sessionId, resetAt: Date.now() }), "utf8");
+  } catch {
+    // Persistence is best-effort: the in-memory reset still applies this process.
+  }
+  return sessionId;
+}
+
+export function getOpencodeSessionSalt() {
+  return opencodeSessionSalt;
+}
+
+export function getPersistedOpencodeSession() {
+  return persistedSessionId;
+}
 
 function unstableRandom() {
   const bytes = crypto.randomBytes(14);
@@ -76,7 +138,7 @@ export function translateSessionId(sessionId, clientTool = "") {
   }
   const digest = crypto
     .createHash("sha256")
-    .update(`opencode\0${clientTool || "generic"}\0${sessionId || ""}`)
+    .update(`opencode\0${clientTool || "generic"}\0${sessionId || ""}${opencodeSessionSalt ? `\0${opencodeSessionSalt}` : ""}`)
     .digest();
   // Deterministic time field from the digest, counter pinned to 1 (what the CLI sends).
   const time = BigInt(`0x${digest.subarray(0, 5).toString("hex")}`) & SESSION_TIME_MASK;
@@ -145,7 +207,7 @@ export function stableSessionId(credentials) {
     stableOpencodeSessions.set(key, existing);
     return existing.sessionId;
   }
-  const sessionId = generateSessionId();
+  const sessionId = translateSessionId(key, "stable");
   if (stableOpencodeSessions.size >= MAX_STABLE_SESSIONS) {
     stableOpencodeSessions.delete(stableOpencodeSessions.keys().next().value);
   }

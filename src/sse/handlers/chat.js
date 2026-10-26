@@ -27,6 +27,7 @@ import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
+import { resolveClaudeGatewayAlias } from "open-sse/utils/claudeGatewayAlias.js";
 import { getKeyAccessContext, enforceKeyAccess, filterAdapterModels } from "../services/keyAccess.js";
 import { resolveSmartChoice } from "../services/systemoneRouter.js";
 
@@ -56,8 +57,11 @@ export async function handleChat(request, clientRawRequest = null) {
   // Claude Code marks a 1M-context request as `<model>[1m]`; the marker matches
   // no combo, alias or provider/model pair, so it must not reach resolution.
   // The capability travels in the anthropic-beta header, forwarded as-is.
-  const { model: modelStr, contextMarker } = stripModelContextMarker(body.model);
-  if (contextMarker) body.model = modelStr;
+  // Non-Claude models discoverable by Claude Code carry a gateway alias (9r-claude-* / ocx-claude-*)
+  // so Claude Code's native filter passes them; resolve back to the canonical model.
+  const { model: rawModelStr, contextMarker } = stripModelContextMarker(body.model);
+  const modelStr = resolveClaudeGatewayAlias(rawModelStr);
+  body.model = modelStr;
 
   const session = resolveSessionIdentity({ headers: clientRawRequest?.headers, body });
   const sessionId = session?.sessionId || null;

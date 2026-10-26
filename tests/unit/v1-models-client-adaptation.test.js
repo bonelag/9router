@@ -120,6 +120,32 @@ describe("v1/models client detection", () => {
     expect(detectModelsClient(req)).toBe(CLIENT_TYPES.ANTHROPIC);
   });
 
+  it("detects Anthropic / Claude Code from anthropic-beta header", () => {
+    const req = new Request("https://router.test/v1/models", {
+      headers: { "anthropic-beta": "context-1m-2025-08-07" },
+    });
+    expect(detectModelsClient(req)).toBe(CLIENT_TYPES.ANTHROPIC);
+  });
+
+  it("detects Anthropic / Claude Code from x-app: cli header", () => {
+    const req = new Request("https://router.test/v1/models", {
+      headers: { "x-app": "cli" },
+    });
+    expect(detectModelsClient(req)).toBe(CLIENT_TYPES.ANTHROPIC);
+  });
+
+  it("detects Anthropic / Claude Code from flavor query param", () => {
+    const req = new Request("https://router.test/v1/models?flavor=claude");
+    expect(detectModelsClient(req)).toBe(CLIENT_TYPES.ANTHROPIC);
+  });
+
+  it("detects Anthropic / Claude Code from x-api-key header without Bearer auth", () => {
+    const req = new Request("https://router.test/v1/models", {
+      headers: { "x-api-key": "sk-ant-test" },
+    });
+    expect(detectModelsClient(req)).toBe(CLIENT_TYPES.ANTHROPIC);
+  });
+
   it("detects Cursor from User-Agent", () => {
     const req = new Request("https://router.test/v1/models", {
       headers: { "user-agent": "Cursor/0.45.11 (darwin-arm64)" },
@@ -196,13 +222,13 @@ describe("Claude Code / Anthropic client formatting", () => {
     expect(sonnet.capabilities.thinking.supported).toBe(true);
 
     // Fixed effort model (gemini-3.8-flash-high) does NOT declare thinking effort
-    const flashHigh = result.data.find((m) => m.id === "google/gemini-3.8-flash-high");
+    const flashHigh = result.data.find((m) => m.id === "9r-claude-google--gemini-3.8-flash-high");
     expect(flashHigh).toBeDefined();
     expect(flashHigh.capabilities.effort.supported).toBe(false);
     expect(flashHigh.capabilities.thinking.supported).toBe(false);
 
     // Non-reasoning model
-    const gpt4oMini = result.data.find((m) => m.id === "openai/gpt-4o-mini");
+    const gpt4oMini = result.data.find((m) => m.id === "9r-claude-openai--gpt-4o-mini");
     expect(gpt4oMini).toBeDefined();
     expect(gpt4oMini.capabilities.effort.supported).toBe(false);
     expect(gpt4oMini.capabilities.thinking.supported).toBe(false);
@@ -214,14 +240,74 @@ describe("Claude Code / Anthropic client formatting", () => {
     });
     const result = adaptModelsResponse(sampleModels, req);
 
-    const gpt561m = result.data.find((m) => m.id === "openai/gpt-5.6[1m]");
+    const gpt561m = result.data.find((m) => m.id === "9r-claude-openai--gpt-5.6[1m]");
     expect(gpt561m).toBeDefined();
-    expect(gpt561m.display_name).toContain("1M");
+    expect(gpt561m.display_name).toContain("[1m]");
     expect(gpt561m.max_input_tokens).toBe(1000000);
 
     // 200k model should NOT have [1m] variant
     const sonnet1m = result.data.find((m) => m.id === "anthropic/claude-3-7-sonnet[1m]");
     expect(sonnet1m).toBeUndefined();
+  });
+
+  it("emits the [1m] variant for models with context >= 300K tokens", () => {
+    const modelsWith300kPlus = [
+      {
+        id: "custom/model-700k",
+        object: "model",
+        owned_by: "custom",
+        capabilities: { contextWindow: 700000 },
+        context_length: 700000,
+      },
+      {
+        id: "custom/model-300k",
+        object: "model",
+        owned_by: "custom",
+        capabilities: { contextWindow: 300000 },
+        context_length: 300000,
+      },
+      {
+        id: "custom/model-200k",
+        object: "model",
+        owned_by: "custom",
+        capabilities: { contextWindow: 200000 },
+        context_length: 200000,
+      },
+      {
+        id: "custom/already-1m[1m]",
+        object: "model",
+        owned_by: "custom",
+        capabilities: { contextWindow: 1000000 },
+        context_length: 1000000,
+      },
+    ];
+
+    const req = new Request("https://router.test/v1/models", {
+      headers: { "user-agent": "claude-code/2.1.207" },
+    });
+    const result = adaptModelsResponse(modelsWith300kPlus, req);
+
+    // 700k and 300k models (>= 300k) should have [1m] variant
+    const model700k1m = result.data.find((m) => m.id === "9r-claude-custom--model-700k[1m]");
+    expect(model700k1m).toBeDefined();
+    expect(model700k1m.display_name).toContain("[1m]");
+
+    const model300k1m = result.data.find((m) => m.id === "9r-claude-custom--model-300k[1m]");
+    expect(model300k1m).toBeDefined();
+    expect(model300k1m.display_name).toContain("[1m]");
+
+    // 200k model should NOT have [1m] variant, but is still present in list
+    const model200k = result.data.find((m) => m.id === "9r-claude-custom--model-200k");
+    expect(model200k).toBeDefined();
+    expect(model200k.display_name).not.toContain("[1m]");
+    const model200k1m = result.data.find((m) => m.id === "9r-claude-custom--model-200k[1m]");
+    expect(model200k1m).toBeUndefined();
+
+    // Already [1m] model should NOT duplicate [1m][1m]
+    const already1m = result.data.find((m) => m.id === "9r-claude-custom--already-1m[1m]");
+    expect(already1m).toBeDefined();
+    const double1m = result.data.find((m) => m.id === "9r-claude-custom--already-1m[1m][1m]");
+    expect(double1m).toBeUndefined();
   });
 
   it("formats single model lookup for Anthropic", () => {
@@ -371,19 +457,28 @@ describe("Route integration GET /v1/models", () => {
   });
 
   it("GET includes noAuth providers like opencode", async () => {
-    const { GET } = await import("../../src/app/api/v1/models/route.js");
-    const req = new Request("https://router.test/v1/models", {
-      headers: { "user-agent": "Cursor/0.45.11" },
-    });
-    const res = await GET(req);
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    const opencodeModel = json.data?.find((m) => m.id === "oc/muse-spark-1.3-contributor-free");
-    expect(opencodeModel).toBeDefined();
-    expect(opencodeModel.owned_by).toBe("oc");
-    expect(opencodeModel.capabilities?.supports_reasoning).toBe(true);
-    expect(opencodeModel.capabilities?.context_length).toBe(1048576);
-  });
+    const disabledDb = await import("../../src/lib/disabledModelsDb.js");
+    const deletedDb = await import("../../src/lib/deletedModelsDb.js");
+    const spyDisabled = vi.spyOn(disabledDb, "getDisabledModels").mockResolvedValue({});
+    const spyDeleted = vi.spyOn(deletedDb, "getDeletedModels").mockResolvedValue({});
+    try {
+      const { GET } = await import("../../src/app/api/v1/models/route.js");
+      const req = new Request("https://router.test/v1/models", {
+        headers: { "user-agent": "Cursor/0.45.11" },
+      });
+      const res = await GET(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      const opencodeModel = json.data?.find((m) => m.id === "oc/muse-spark-1.3-contributor-free");
+      expect(opencodeModel).toBeDefined();
+      expect(opencodeModel.owned_by).toBe("oc");
+      expect(opencodeModel.capabilities?.supports_reasoning).toBe(true);
+      expect(opencodeModel.capabilities?.context_length).toBe(1048576);
+    } finally {
+      spyDisabled.mockRestore();
+      spyDeleted.mockRestore();
+    }
+  }, 15000);
 
   it("does not fetch upstream for custom providers", async () => {
     const { buildModelsList } = await import("../../src/app/api/v1/models/route.js");

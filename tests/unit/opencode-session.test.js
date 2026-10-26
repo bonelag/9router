@@ -14,6 +14,7 @@ import {
   generateSessionId,
   translateSessionId,
   stableSessionId,
+  resetOpencodeSession,
 } from "../../open-sse/executors/opencode.js";
 import {
   generateSessionId as generateZenSessionId,
@@ -324,5 +325,30 @@ describe("OpenCode Stable Session Reuse (429 follow-up)", () => {
   it("declares forceStream on the opencode transport so chatCore serves SSE upstream", async () => {
     const { PROVIDERS } = await import("../../open-sse/config/providers.js");
     expect(PROVIDERS.opencode?.forceStream).toBe(true);
+  });
+
+  describe("resetOpencodeSession", () => {
+    it("resets session generation so subsequent translateSessionId produces a fresh session ID", () => {
+      const before = translateSessionId("conv-reset-test", "claude");
+      expect(before).toMatch(OPENCODE_SESSION_RE);
+
+      const newId = resetOpencodeSession();
+      expect(newId).toMatch(OPENCODE_SESSION_RE);
+
+      const after = translateSessionId("conv-reset-test", "claude");
+      expect(after).toMatch(OPENCODE_SESSION_RE);
+      expect(after).not.toBe(before);
+    });
+
+    it("clears stable sessions cache so subsequent stableSessionId gets a fresh session ID", () => {
+      const creds = { connectionId: "stable-reset-test" };
+      const before = stableSessionId(creds);
+      expect(stableSessionId(creds)).toBe(before);
+
+      resetOpencodeSession();
+      const after = stableSessionId(creds);
+      expect(after).toMatch(OPENCODE_SESSION_RE);
+      expect(after).not.toBe(before);
+    });
   });
 });

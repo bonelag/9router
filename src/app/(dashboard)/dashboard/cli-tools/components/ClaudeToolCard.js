@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Card, Button, ModelSelectModal, ManualConfigModal, Tooltip } from "@/shared/components";
+import { Card, Button, ModelSelectModal, ManualConfigModal, Tooltip, Toggle } from "@/shared/components";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
 import { rememberEndpoint } from "./cliEndpointPresets";
@@ -59,6 +59,7 @@ export default function ClaudeToolCard({
   const [exaMcpEnabled, setExaMcpEnabled] = useState(false);
   const [autoCompactWindow, setAutoCompactWindow] = useState("");
   const [oneMContext, setOneMContext] = useState(false);
+  const [gatewayModelDiscovery, setGatewayModelDiscovery] = useState(false);
   const hasInitializedModels = useRef(false);
 
   // Claude Code only string-matches the marker against the model name, so it
@@ -113,6 +114,10 @@ export default function ClaudeToolCard({
     const env = claudeStatus?.settings?.env;
     if (!env) return;
     setOneMContext(tool.defaultModels.some((model) => env[model.envKey]?.endsWith("[1m]")));
+    setGatewayModelDiscovery(
+      env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY === "true" ||
+      env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY === "1"
+    );
   }, [claudeStatus?.settings?.env, tool.defaultModels]);
 
   useEffect(() => {
@@ -220,10 +225,13 @@ export default function ClaudeToolCard({
       if (autoCompactWindow) {
         env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = autoCompactWindow;
       }
+      if (gatewayModelDiscovery) {
+        env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = "true";
+      }
       const res = await fetch("/api/cli-tools/claude-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ env, exaMcpEnabled, autoCompactWindow }),
+        body: JSON.stringify({ env, exaMcpEnabled, autoCompactWindow, gatewayModelDiscovery }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -254,6 +262,7 @@ export default function ClaudeToolCard({
         setExaMcpEnabled(false);
         setAutoCompactWindow("");
         setOneMContext(false);
+        setGatewayModelDiscovery(false);
       } else {
         setMessage({ type: "error", text: data.error || "Failed to reset settings" });
       }
@@ -285,6 +294,9 @@ export default function ClaudeToolCard({
     });
     if (autoCompactWindow) {
       env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = autoCompactWindow;
+    }
+    if (gatewayModelDiscovery) {
+      env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = "true";
     }
 
     return [
@@ -484,6 +496,28 @@ export default function ClaudeToolCard({
                       <span className="material-symbols-outlined text-text-muted text-[14px] cursor-help">info</span>
                     </Tooltip>
                   </label>
+                </div>
+
+                {/* Show All Available Models (CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY) */}
+                <div className="flex flex-wrap items-center justify-between gap-1.5 sm:grid sm:grid-cols-[8rem_auto_1fr] sm:items-center sm:gap-2">
+                  <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Discovery</span>
+                  <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
+                  <div className="flex items-center justify-between gap-3 flex-1 min-w-0">
+                    <div className="flex flex-col min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-medium text-text-main">Show All Available Models</span>
+                        <Tooltip text="Sets CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY in Claude Code environment so it discovers all models exposed by 9router's /v1/models endpoint.">
+                          <span className="material-symbols-outlined text-text-muted text-[14px] cursor-help">info</span>
+                        </Tooltip>
+                      </div>
+                      <span className="text-[10px] text-text-muted font-mono truncate">CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY</span>
+                    </div>
+                    <Toggle
+                      checked={gatewayModelDiscovery}
+                      onChange={setGatewayModelDiscovery}
+                      size="sm"
+                    />
+                  </div>
                 </div>
               </div>
 

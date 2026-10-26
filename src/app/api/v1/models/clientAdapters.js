@@ -4,11 +4,16 @@
  * and adapts the model list and single model response to match each client's expected shape.
  */
 
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
 import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 import { findModelName } from "open-sse/config/providerModels.js";
 import { deriveModelName } from "open-sse/providers/models/namePatterns.js";
 import { ALIAS_TO_ID } from "@/shared/constants/providers";
+import { toClaudeGatewayAlias, resolveClaudeGatewayAlias } from "open-sse/utils/claudeGatewayAlias.js";
+import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
 
 export const CLIENT_TYPES = {
   ANTHROPIC: "anthropic",
@@ -21,6 +26,7 @@ export const CLIENT_TYPES = {
 const GROK_KNOWN_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 const ANTHROPIC_EFFORT_RUNGS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const ONE_MILLION = 1_000_000;
+const CONTEXT_1M_THRESHOLD = 300_000;
 const MODEL_INFO_CREATED_AT = "2026-01-01T00:00:00Z";
 
 /**
@@ -57,16 +63,24 @@ export function detectModelsClient(request) {
   const headers = request.headers;
   const ua = (headers?.get("user-agent") || "").toLowerCase();
   const anthropicVersion = headers?.get("anthropic-version");
+  const anthropicBeta = headers?.get("anthropic-beta");
+  const xApp = (headers?.get("x-app") || "").toLowerCase();
+  const xClientName = (headers?.get("x-client-name") || "").toLowerCase();
   const flavor = url.searchParams.get("flavor")?.toLowerCase();
 
   // 1. Anthropic / Claude Code
   if (
     anthropicVersion !== null ||
+    anthropicBeta !== null ||
     flavor === "anthropic" ||
-    ua.includes("claude-code") ||
-    ua.includes("claude-cli") ||
-    ua.includes("@anthropic-ai/sdk") ||
-    ua.includes("anthropic")
+    flavor === "claude" ||
+    url.searchParams.has("claude") ||
+    ua.includes("claude") ||
+    ua.includes("@anthropic-ai") ||
+    ua.includes("anthropic") ||
+    xApp === "cli" ||
+    xClientName.includes("claude") ||
+    (headers?.get("x-api-key") !== null && headers?.get("authorization") === null)
   ) {
     return CLIENT_TYPES.ANTHROPIC;
   }
@@ -112,21 +126,24 @@ export function detectModelsClient(request) {
  */
 export function resolveModelMeta(model) {
   const modelIdStr = String(model?.id || "");
+  const cleanId = modelIdStr.endsWith("[1m]") ? modelIdStr.slice(0, -4) : modelIdStr;
+  const unaliased = resolveClaudeGatewayAlias(cleanId);
   let providerAlias = model?.owned_by || "";
-  let rawModelId = modelIdStr;
+  let rawModelId = unaliased;
 
-  if (modelIdStr.includes("/")) {
-    const slashIdx = modelIdStr.indexOf("/");
-    providerAlias = modelIdStr.slice(0, slashIdx);
-    rawModelId = modelIdStr.slice(slashIdx + 1);
+  if (unaliased.includes("/")) {
+    const slashIdx = unaliased.indexOf("/");
+    providerAlias = providerAlias || unaliased.slice(0, slashIdx);
+    rawModelId = unaliased.slice(slashIdx + 1);
   }
 
   const providerId = ALIAS_TO_ID[providerAlias] || providerAlias;
-  const baseModel = rawModelId.includes("/") ? rawModelId.split("/").pop() : rawModelId;
+  const cleanRawModelId = rawModelId.endsWith("[1m]") ? rawModelId.slice(0, -4) : rawModelId;
+  const baseModel = cleanRawModelId.includes("/") ? cleanRawModelId.split("/").pop() : cleanRawModelId;
 
   // Capabilities: use existing on model if present, otherwise resolve
-  const rawCaps = model?.capabilities || (providerId ? getCapabilitiesForModel(providerId, rawModelId) : null);
-  const fallback = providerId ? getCapabilitiesForModel(providerId, rawModelId) : {};
+  const rawCaps = model?.capabilities || (providerId ? (getCapabilitiesForModel(providerId, rawModelId) || getCapabilitiesForModel(providerId, cleanRawModelId)) : null);
+  const fallback = providerId ? (getCapabilitiesForModel(providerId, rawModelId) || getCapabilitiesForModel(providerId, cleanRawModelId)) : {};
   const caps = {
     ...fallback,
     ...(rawCaps || {}),
@@ -149,7 +166,7 @@ export function resolveModelMeta(model) {
         : (Number.isFinite(fallback.maxOutput) ? fallback.maxOutput : 8192)));
 
   // Display name
-  const displayName = findModelName(providerAlias, rawModelId) || deriveModelName(rawModelId) || modelIdStr;
+  const displayName = findModelName(providerAlias, rawModelId) || findModelName(providerAlias, cleanRawModelId) || deriveModelName(rawModelId) || modelIdStr;
 
   // Check if model already carries a fixed thinking effort suffix (e.g. -high, -medium)
   const isFixedEffort = isFixedEffortModel(modelIdStr);
@@ -203,9 +220,16 @@ export function formatAnthropicModel(model) {
   const hasEffort = ladder.length > 0;
   const rungs = new Set(ladder.filter((r) => ANTHROPIC_EFFORT_RUNGS.has(r)));
 
+  const aliasedId = toClaudeGatewayAlias(model.id);
+  const providerTag = meta.providerAlias && !meta.displayName.toLowerCase().includes(meta.providerAlias.toLowerCase())
+    ? ` (${meta.providerAlias})`
+    : "";
+  const displayName = `${meta.displayName}${providerTag}`;
+
   return {
-    id: model.id,
-    display_name: meta.displayName,
+    id: aliasedId,
+    display_name: displayName,
+    description: `Routed by 9router to ${model.id}`,
     type: "model",
     created_at: MODEL_INFO_CREATED_AT,
     capabilities: {
@@ -251,31 +275,133 @@ export function formatAnthropicModel(model) {
 }
 
 /**
- * Format models list for Anthropic / Claude Code.
- * Also emits [1m] variant for models with context >= 1,000,000 tokens.
+ * Normalize a model ID for comparison by stripping [1m] context marker,
+ * decoding any Claude gateway alias (9r-claude-...), trimming, and lowercasing.
  */
-export function formatAnthropicModelList(models) {
+export function normalizeModelId(id) {
+  if (!id || typeof id !== "string") return "";
+  const { model } = stripModelContextMarker(id.trim());
+  const unaliased = resolveClaudeGatewayAlias(model);
+  const clean = stripModelContextMarker(unaliased).model;
+  return clean.trim().toLowerCase();
+}
+
+/**
+ * Check if a model matches any of the official Claude Code model slots (fable, opus, sonnet, haiku).
+ * Matches both base and [1m] versions, as well as aliased IDs (9r-claude-...).
+ */
+export function isOfficialModel(modelId, officialModels) {
+  if (!modelId || !officialModels) return false;
+  const list = Array.isArray(officialModels)
+    ? officialModels
+    : (officialModels instanceof Set ? Array.from(officialModels) : [officialModels]);
+  if (list.length === 0) return false;
+
+  const normModel = normalizeModelId(modelId);
+  if (!normModel) return false;
+
+  const modelHasSlash = normModel.includes("/");
+  const modelBare = modelHasSlash ? normModel.split("/").pop() : normModel;
+  const modelWithoutProvider = modelHasSlash ? normModel.slice(normModel.indexOf("/") + 1) : normModel;
+
+  for (const official of list) {
+    if (!official) continue;
+    const normOfficial = normalizeModelId(official);
+    if (!normOfficial) continue;
+
+    // 1. Exact match
+    if (normModel === normOfficial) return true;
+
+    const officialHasSlash = normOfficial.includes("/");
+    // If BOTH have slashes and they didn't match exactly, do NOT cross-match different providers
+    if (modelHasSlash && officialHasSlash) {
+      continue;
+    }
+
+    // One of them does not have a slash: check if model name matches
+    const officialBare = officialHasSlash ? normOfficial.split("/").pop() : normOfficial;
+    const officialWithoutProvider = officialHasSlash ? normOfficial.slice(normOfficial.indexOf("/") + 1) : normOfficial;
+
+    if (modelWithoutProvider === normOfficial || officialWithoutProvider === normModel) {
+      return true;
+    }
+    if (modelBare === officialBare) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function getClaudeSettingsPath() {
+  const custom = process.env.CLAUDE_CONFIG_DIR;
+  const configDir = custom && custom.length > 0 ? custom : path.join(os.homedir(), ".claude");
+  return path.join(configDir, "settings.json");
+}
+
+export function readClaudeOfficialModelIds() {
+  try {
+    const settingsPath = getClaudeSettingsPath();
+    if (!fs.existsSync(settingsPath)) return [];
+    const content = fs.readFileSync(settingsPath, "utf-8");
+    const stripped = content.replace(/,(\s*[}\]])/g, "$1");
+    const parsed = JSON.parse(stripped);
+    const env = parsed?.env;
+    if (!env || typeof env !== "object") return [];
+
+    const keys = [
+      "ANTHROPIC_DEFAULT_OPUS_MODEL",
+      "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      "ANTHROPIC_DEFAULT_FABLE_MODEL",
+    ];
+    const results = [];
+    for (const key of keys) {
+      const val = env[key];
+      if (typeof val === "string" && val.trim()) {
+        results.push(val.trim());
+      }
+    }
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Format models list for Anthropic / Claude Code.
+ * Automatically emits [1m] variant for models with context >= 300,000 tokens (Claude Code native convention).
+ * Excludes official models (fable, opus, sonnet, haiku) from the extended models list.
+ */
+export function formatAnthropicModelList(models, options = {}) {
+  const officialModels = options?.officialModels !== undefined
+    ? options.officialModels
+    : readClaudeOfficialModelIds();
   const result = [];
   const seenIds = new Set();
 
   for (const model of models) {
-    if (!model?.id || seenIds.has(model.id)) continue;
-    seenIds.add(model.id);
+    if (!model?.id) continue;
+    if (isOfficialModel(model.id, officialModels)) continue;
 
     const anthropicItem = formatAnthropicModel(model);
+    if (isOfficialModel(anthropicItem.id, officialModels)) continue;
+    if (seenIds.has(anthropicItem.id)) continue;
+    seenIds.add(anthropicItem.id);
+
     result.push(anthropicItem);
 
-    // [1m] variant for models with >= 1M context (Claude Code native convention)
+    // [1m] variant for models with >= 300K context (Claude Code native convention)
     const meta = resolveModelMeta(model);
-    if (meta.contextLength >= ONE_MILLION && !model.id.includes("[1m]")) {
-      const oneMillionId = `${model.id}[1m]`;
-      if (!seenIds.has(oneMillionId)) {
+    if ((meta.contextLength >= CONTEXT_1M_THRESHOLD || meta.contextLength >= ONE_MILLION) && !anthropicItem.id.includes("[1m]")) {
+      const oneMillionId = `${anthropicItem.id}[1m]`;
+      if (!isOfficialModel(oneMillionId, officialModels) && !seenIds.has(oneMillionId)) {
         seenIds.add(oneMillionId);
         result.push({
           ...anthropicItem,
           id: oneMillionId,
-          display_name: `${meta.displayName} · 1M`,
-          max_input_tokens: ONE_MILLION,
+          display_name: `${anthropicItem.display_name} [1m]`,
+          max_input_tokens: meta.contextLength >= ONE_MILLION ? ONE_MILLION : meta.contextLength,
         });
       }
     }
@@ -464,14 +590,14 @@ export function formatOpenAIModelList(models) {
  * @param {Request} request
  * @returns {object} Adapted JSON payload
  */
-export function adaptModelsResponse(models, request) {
+export function adaptModelsResponse(models, request, options = {}) {
   const clientType = detectModelsClient(request);
   const url = request ? new URL(request.url, "http://localhost") : null;
   const isClientVersionQuery = Boolean(url?.searchParams.has("client_version"));
 
   switch (clientType) {
     case CLIENT_TYPES.ANTHROPIC:
-      return formatAnthropicModelList(models);
+      return formatAnthropicModelList(models, options);
     case CLIENT_TYPES.CURSOR:
       return formatCursorModelList(models);
     case CLIENT_TYPES.GROK:

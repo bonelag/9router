@@ -7,6 +7,8 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import { DEFAULT_PLUGINS } from "@/shared/constants/coworkPlugins";
+import { buildModelsList } from "@/app/api/v1/models/route.js";
+import { formatAnthropicModelList } from "@/app/api/v1/models/clientAdapters.js";
 
 const execAsync = promisify(exec);
 
@@ -123,7 +125,7 @@ export async function GET() {
 // POST - Backup old fields and write new settings
 export async function POST(request) {
   try {
-    const { env, exaMcpEnabled, autoCompactWindow } = await request.json();
+    const { env, exaMcpEnabled, autoCompactWindow, gatewayModelDiscovery } = await request.json();
     
     if (!env || typeof env !== "object") {
       return NextResponse.json(
@@ -180,8 +182,57 @@ export async function POST(request) {
       delete newSettings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
     }
 
+    // CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY — lets Claude Code query /v1/models
+    // to discover and list all models exposed by the gateway.
+    if (gatewayModelDiscovery !== undefined) {
+      if (gatewayModelDiscovery) {
+        newSettings.env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = "true";
+      } else {
+        delete newSettings.env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY;
+      }
+    } else if (env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY !== undefined) {
+      if (env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY === "true" || env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY === true) {
+        newSettings.env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = "true";
+      } else {
+        delete newSettings.env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY;
+      }
+    }
+
     // Write new settings
     await fs.writeFile(settingsPath, JSON.stringify(newSettings, null, 2));
+
+    // Pre-write Claude Code gateway models cache (~/.claude/cache/gateway-models.json)
+    const cacheDir = path.join(claudeDir, "cache");
+    const gatewayCachePath = path.join(cacheDir, "gateway-models.json");
+    if (newSettings.env?.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY === "true" && newSettings.env?.ANTHROPIC_BASE_URL) {
+      try {
+        const rawModels = await buildModelsList(["llm"]);
+        const officialModels = [
+          newSettings.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
+          newSettings.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
+          newSettings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+          newSettings.env.ANTHROPIC_DEFAULT_FABLE_MODEL,
+        ].filter(Boolean);
+        const anthropicModels = formatAnthropicModelList(rawModels, { officialModels });
+        await fs.mkdir(cacheDir, { recursive: true });
+        const cachePayload = {
+          baseUrl: newSettings.env.ANTHROPIC_BASE_URL,
+          fetchedAt: Date.now(),
+          models: (anthropicModels.data || []).map((m) => ({
+            id: m.id,
+            display_name: m.display_name,
+            description: m.description || "From gateway",
+          })),
+        };
+        await fs.writeFile(gatewayCachePath, JSON.stringify(cachePayload, null, 2), "utf-8");
+      } catch (cacheErr) {
+        console.warn("Failed to pre-write gateway-models.json cache:", cacheErr);
+      }
+    } else {
+      try {
+        await fs.unlink(gatewayCachePath);
+      } catch {}
+    }
 
     // Exa MCP toggle — write to ~/.claude.json (CLI reads mcpServers from here).
     if (EXA_PLUGIN) {
@@ -210,6 +261,7 @@ const RESET_ENV_KEYS = [
   "ANTHROPIC_DEFAULT_HAIKU_MODEL",
   "API_TIMEOUT_MS",
   "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+  "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
 ];
 
 // DELETE - Reset settings (remove env fields)
@@ -246,6 +298,12 @@ export async function DELETE() {
 
     // Remove injected MCP servers (Exa) from ~/.claude.json
     await writeClaudeJsonMcp(null);
+
+    // Remove gateway models cache
+    try {
+      const cachePath = path.join(path.dirname(settingsPath), "cache", "gateway-models.json");
+      await fs.unlink(cachePath);
+    } catch {}
 
     // Write updated settings
     await fs.writeFile(settingsPath, JSON.stringify(currentSettings, null, 2));

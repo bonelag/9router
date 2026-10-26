@@ -5,6 +5,7 @@ import PropTypes from "prop-types";
 import Card from "./Card";
 import Select from "./Select";
 import Badge from "./Badge";
+import Button from "./Button";
 
 const NONE_PROXY_POOL_VALUE = "__none__";
 const STRATEGIES = [
@@ -19,6 +20,27 @@ export default function NoAuthProxyCard({ providerId }) {
   const [rotateStrategy, setRotateStrategy] = useState("none");
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetFlash, setResetFlash] = useState(false);
+
+  const isOpenCode = providerId === "opencode" || providerId === "oc" || providerId === "opencode-free";
+
+  const handleResetSession = async () => {
+    setResetting(true);
+    try {
+      const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/reset-session`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        setResetFlash(true);
+        setTimeout(() => setResetFlash(false), 2000);
+      }
+    } catch (e) {
+      console.log("Reset session error:", e);
+    } finally {
+      setResetting(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -125,6 +147,30 @@ export default function NoAuthProxyCard({ providerId }) {
               : `Uses the selected pool above. Set to Round-robin or Random to rotate across all active pools.`}
         </p>
       </div>
+
+      {isOpenCode && (
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-4 mt-4 border-t border-black/5 dark:border-white/5">
+          <div>
+            <p className="text-sm font-medium text-text-main">Session ID</p>
+            <p className="text-xs text-text-muted">
+              Reset upstream session ID to bypass free usage limits (429).
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {resetFlash && <Badge variant="success" size="sm">Session Reset!</Badge>}
+            <Button
+              size="sm"
+              variant="secondary"
+              icon="restart_alt"
+              onClick={handleResetSession}
+              disabled={resetting}
+              loading={resetting}
+            >
+              Reset sessionID
+            </Button>
+          </div>
+        </div>
+      )}
     </Card>
   );
 }
