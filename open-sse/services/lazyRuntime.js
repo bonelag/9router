@@ -44,6 +44,26 @@ function npmInstall(pkg, version) {
   });
 }
 
+function getNativeRequire(dir) {
+  try {
+    if (typeof createRequire === 'function') {
+      return createRequire(path.join(dir, 'package.json'));
+    }
+  } catch {}
+  try {
+    const hostRequire = typeof __non_webpack_require__ === 'function'
+      ? __non_webpack_require__
+      : (typeof eval === 'function' ? eval('require') : null);
+    if (hostRequire) {
+      const mod = hostRequire('module');
+      if (typeof mod?.createRequire === 'function') {
+        return mod.createRequire(path.join(dir, 'package.json'));
+      }
+    }
+  } catch {}
+  return null;
+}
+
 const inflight = new Map();
 
 async function load(pkg) {
@@ -54,11 +74,13 @@ async function load(pkg) {
     if (!isModuleMissing(error)) throw error;
   }
   // 2) Already present in the runtime dir from a previous install.
-  const runtimeRequire = createRequire(path.join(getRuntimeDir(), "package.json"));
-  try {
-    return await import(pathToFileURL(runtimeRequire.resolve(pkg)).href);
-  } catch (error) {
-    if (!isModuleMissing(error)) throw error;
+  const runtimeRequire = getNativeRequire(getRuntimeDir());
+  if (runtimeRequire) {
+    try {
+      return await import(pathToFileURL(runtimeRequire.resolve(pkg)).href);
+    } catch (error) {
+      if (!isModuleMissing(error)) throw error;
+    }
   }
   // 3) Download on demand, then import from the runtime dir.
   const version = LAZY_DEP_VERSIONS[pkg] || "latest";
@@ -71,7 +93,11 @@ async function load(pkg) {
       `install it manually: cd "${dir}" && npm install ${pkg}@${version}`
     );
   }
-  return import(pathToFileURL(createRequire(path.join(dir, "package.json")).resolve(pkg)).href);
+  const installedRequire = getNativeRequire(dir);
+  if (installedRequire) {
+    return import(pathToFileURL(installedRequire.resolve(pkg)).href);
+  }
+  return import(pathToFileURL(path.join(dir, "node_modules", pkg, "dist", `${pkg}.js`)).href);
 }
 
 export function loadRuntimeDep(pkg) {
