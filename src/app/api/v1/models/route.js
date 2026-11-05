@@ -8,7 +8,7 @@ import {
   isOpenAICompatibleProvider,
   resolveProviderId,
 } from "@/shared/constants/providers";
-import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/localDb";
+import { getProviderConnections, getCombos, getCustomModels, getModelAliases, getSettings } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { getDeletedModels } from "@/lib/deletedModelsDb";
 import { getModelOverrides } from "@/lib/modelOverridesDb";
@@ -701,6 +701,21 @@ export async function buildModelsList(kindFilter, options = {}) {
       }
     }
   }
+
+  try {
+    const settings = await getSettings();
+    if (settings.codexModelMapping && typeof settings.codexModelMapping === "object") {
+      for (const codexModelId of Object.keys(settings.codexModelMapping)) {
+        if (codexModelId && kindFilter.includes(LLM_KIND)) {
+          models.push({
+            id: codexModelId,
+            object: "model",
+            owned_by: "codex",
+          });
+        }
+      }
+    }
+  } catch {}
 
   const dedupedModels = [];
   const seenModelIds = new Set();

@@ -30,6 +30,7 @@ import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
 import { resolveClaudeGatewayAlias } from "open-sse/utils/claudeGatewayAlias.js";
 import { getKeyAccessContext, enforceKeyAccess, filterAdapterModels } from "../services/keyAccess.js";
 import { resolveSmartChoice } from "../services/systemoneRouter.js";
+import { applyCodexModelMapping } from "@/lib/codexModelMapping.js";
 
 /**
  * Handle chat completion request
@@ -60,7 +61,8 @@ export async function handleChat(request, clientRawRequest = null) {
   // Non-Claude models discoverable by Claude Code carry a gateway alias (9r-claude-* / ocx-claude-*)
   // so Claude Code's native filter passes them; resolve back to the canonical model.
   const { model: rawModelStr, contextMarker } = stripModelContextMarker(body.model);
-  const modelStr = resolveClaudeGatewayAlias(rawModelStr);
+  let modelStr = resolveClaudeGatewayAlias(rawModelStr);
+  let effectiveContextMarker = contextMarker;
   body.model = modelStr;
 
   const session = resolveSessionIdentity({ headers: clientRawRequest?.headers, body });
@@ -95,6 +97,14 @@ export async function handleChat(request, clientRawRequest = null) {
   if (!modelStr) {
     log.warn("CHAT", "Missing model");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
+  }
+
+  const mappedModel = applyCodexModelMapping(modelStr, settings.codexModelMapping);
+  if (mappedModel && mappedModel !== modelStr) {
+    log.info("CHAT", `Codex model mapping applied: ${modelStr} -> ${mappedModel}`);
+    modelStr = mappedModel;
+    body.model = mappedModel;
+    effectiveContextMarker = null;
   }
 
   // Per-key access control: a restricted key may call only its listed combos and
@@ -189,7 +199,7 @@ export async function handleChat(request, clientRawRequest = null) {
     });
   }
 
-  return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, contextMarker ? `${modelStr.slice(modelStr.indexOf("/") + 1)}[${contextMarker}]` : null);
+  return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, effectiveContextMarker ? `${modelStr.slice(modelStr.indexOf("/") + 1)}[${effectiveContextMarker}]` : null);
 }
 
 /**

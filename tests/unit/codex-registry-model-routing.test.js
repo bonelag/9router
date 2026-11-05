@@ -15,11 +15,14 @@
 import { describe, it, expect } from "vitest";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ── #4202 Registry checks ────────────────────────────────────────────────────
 
 const codexSrc = fs.readFileSync(
-  path.resolve("../open-sse/providers/registry/codex.js"),
+  path.resolve(__dirname, "../../open-sse/providers/registry/codex.js"),
   "utf-8"
 );
 

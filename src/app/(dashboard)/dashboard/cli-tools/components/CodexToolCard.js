@@ -9,6 +9,7 @@ import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
 import { rememberEndpoint } from "./cliEndpointPresets";
 import { getCurrentCodexProviderSettings, deriveProfileNameFromModel } from "./codexConfig";
+import { CODEX_STANDARD_MODELS } from "@/lib/codexModelMapping";
 
 export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, apiKeys, activeProviders, cloudEnabled, initialStatus, tunnelEnabled, tunnelPublicUrl, tailscaleEnabled, tailscaleUrl }) {
   const [codexStatus, setCodexStatus] = useState(initialStatus || null);
@@ -32,9 +33,17 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
   const [creatingProfile, setCreatingProfile] = useState(false);
   const [deletingProfile, setDeletingProfile] = useState(null);
   const [copiedCommand, setCopiedCommand] = useState("");
+  const [modelMapping, setModelMapping] = useState({});
+  const [mappingCodexModel, setMappingCodexModel] = useState(CODEX_STANDARD_MODELS[0]?.id || "gpt-6.1-sol");
+  const [customCodexInput, setCustomCodexInput] = useState("");
+  const [mappingTargetModel, setMappingTargetModel] = useState("");
+  const [mappingModalOpen, setMappingModalOpen] = useState(false);
+  const [editingMappingKey, setEditingMappingKey] = useState(null);
+  const [savingMapping, setSavingMapping] = useState(false);
 
   useEffect(() => {
     fetchProfiles();
+    fetchModelMapping();
   }, []);
 
   useEffect(() => {
@@ -52,8 +61,21 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
       if (!codexStatus) checkCodexStatus();
       fetchModelAliases();
       fetchProfiles();
+      fetchModelMapping();
     }
   }, [isExpanded]);
+
+  const fetchModelMapping = async () => {
+    try {
+      const res = await fetch("/api/settings");
+      if (res.ok) {
+        const data = await res.json();
+        setModelMapping(data.codexModelMapping || {});
+      }
+    } catch (error) {
+      console.log("Error fetching codex model mapping:", error);
+    }
+  };
 
   const fetchModelAliases = async () => {
     try {
@@ -139,6 +161,83 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
       setTimeout(() => setCopiedCommand(""), 2000);
     } catch (e) {
       console.log("Copy failed", e);
+    }
+  };
+
+  const saveCodexModelMapping = async (nextMapping) => {
+    setSavingMapping(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ codexModelMapping: nextMapping }),
+      });
+      if (res.ok) {
+        setModelMapping(nextMapping);
+        return true;
+      }
+    } catch (error) {
+      console.log("Error updating codex model mapping:", error);
+    } finally {
+      setSavingMapping(false);
+    }
+    return false;
+  };
+
+  const handleSaveMapping = async () => {
+    const srcKey = (
+      editingMappingKey ||
+      (mappingCodexModel === "custom" ? customCodexInput : mappingCodexModel) ||
+      ""
+    ).trim();
+    const dstVal = mappingTargetModel.trim();
+    if (!srcKey || !dstVal) return;
+
+    const next = { ...modelMapping };
+    if (editingMappingKey && editingMappingKey !== srcKey) {
+      delete next[editingMappingKey];
+    }
+    next[srcKey] = dstVal;
+
+    const success = await saveCodexModelMapping(next);
+    if (success) {
+      setMappingTargetModel("");
+      setCustomCodexInput("");
+      setEditingMappingKey(null);
+    }
+  };
+
+  const handleStartEditMapping = (srcKey) => {
+    setEditingMappingKey(srcKey);
+    if (CODEX_STANDARD_MODELS.some((m) => m.id === srcKey)) {
+      setMappingCodexModel(srcKey);
+    } else {
+      setMappingCodexModel("custom");
+      setCustomCodexInput(srcKey);
+    }
+    setMappingTargetModel(modelMapping[srcKey] || "");
+  };
+
+  const handleCancelEditMapping = () => {
+    setEditingMappingKey(null);
+    setMappingTargetModel("");
+    setCustomCodexInput("");
+  };
+
+  const handleDeleteMapping = async (srcKey) => {
+    const next = { ...modelMapping };
+    delete next[srcKey];
+    const success = await saveCodexModelMapping(next);
+    if (success && editingMappingKey === srcKey) {
+      handleCancelEditMapping();
+    }
+  };
+
+  const handleModelSelectForMapping = (model) => {
+    setMappingModalOpen(false);
+    const selectedModelId = model?.value || model?.id;
+    if (selectedModelId) {
+      setMappingTargetModel(selectedModelId);
     }
   };
 
@@ -458,6 +557,194 @@ default_subagent_model = "${effectiveSubagentModel}"
                 </Button>
               </div>
 
+              {/* Model Mapping */}
+              <div className="mt-4 pt-4 border-t border-border flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-text-main flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[16px] text-primary">alt_route</span>
+                      Model Mapping
+                    </span>
+                    {Object.keys(modelMapping).length > 0 && (
+                      <span className="px-1.5 py-0.2 bg-primary/10 text-primary text-[10px] font-medium rounded-full">
+                        {Object.keys(modelMapping).length}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[11px] text-text-muted hidden sm:inline">
+                    Route standard Codex model requests to configured 9Router models
+                  </span>
+                </div>
+
+                {/* Add / Edit Mapping bar */}
+                <div className="flex flex-col gap-2 p-2.5 bg-surface/40 border border-border rounded-lg">
+                  {editingMappingKey && (
+                    <div className="flex items-center justify-between text-[11px] text-primary font-medium pb-1 border-b border-border/50">
+                      <span>Editing mapping for <code className="font-mono font-bold">{editingMappingKey}</code></span>
+                      <button
+                        type="button"
+                        onClick={handleCancelEditMapping}
+                        className="text-text-muted hover:text-text-main underline cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[12rem_1fr_auto_auto] sm:items-center">
+                    {mappingCodexModel === "custom" && !editingMappingKey ? (
+                      <div className="relative w-full min-w-0">
+                        <input
+                          type="text"
+                          value={customCodexInput}
+                          onChange={(e) => setCustomCodexInput(e.target.value.trim())}
+                          placeholder="Custom Codex model ID"
+                          className="w-full min-w-0 px-2.5 py-1.5 pr-8 bg-surface rounded border border-border text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setMappingCodexModel(CODEX_STANDARD_MODELS[0]?.id || "gpt-6.1-sol")}
+                          className="absolute right-1 top-1/2 -translate-y-1/2 text-[10px] text-text-muted hover:text-text-main px-1"
+                          title="Switch to list"
+                        >
+                          list
+                        </button>
+                      </div>
+                    ) : (
+                      <select
+                        value={mappingCodexModel}
+                        disabled={!!editingMappingKey}
+                        onChange={(e) => setMappingCodexModel(e.target.value)}
+                        className="w-full min-w-0 px-2.5 py-1.5 bg-surface rounded border border-border text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-60"
+                      >
+                        {CODEX_STANDARD_MODELS.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.id} ({m.name})
+                          </option>
+                        ))}
+                        {!CODEX_STANDARD_MODELS.some((m) => m.id === mappingCodexModel) && mappingCodexModel !== "custom" && (
+                          <option value={mappingCodexModel}>{mappingCodexModel}</option>
+                        )}
+                        <option value="custom">Custom model ID...</option>
+                      </select>
+                    )}
+
+                    <div className="relative w-full min-w-0">
+                      <input
+                        type="text"
+                        value={mappingTargetModel}
+                        onChange={(e) => setMappingTargetModel(e.target.value)}
+                        placeholder="target model (e.g. gemini-3.8-flash)"
+                        className="w-full min-w-0 pl-2.5 pr-7 py-1.5 bg-surface rounded border border-border text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
+                        onKeyDown={(e) => e.key === "Enter" && handleSaveMapping()}
+                      />
+                      {mappingTargetModel && (
+                        <button
+                          onClick={() => setMappingTargetModel("")}
+                          className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-text-muted hover:text-red-500 rounded transition-colors"
+                          title="Clear"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">close</span>
+                        </button>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={() => setMappingModalOpen(true)}
+                      disabled={!activeProviders?.length}
+                      className={`w-full sm:w-auto rounded border px-2.5 py-1.5 text-xs transition-colors whitespace-nowrap sm:shrink-0 ${
+                        activeProviders?.length
+                          ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer"
+                          : "opacity-50 cursor-not-allowed border-border"
+                      }`}
+                    >
+                      Select Model
+                    </button>
+
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={handleSaveMapping}
+                      disabled={
+                        savingMapping ||
+                        !mappingTargetModel.trim() ||
+                        (mappingCodexModel === "custom" && !customCodexInput.trim())
+                      }
+                      loading={savingMapping}
+                      className="!h-7.5 whitespace-nowrap"
+                    >
+                      {editingMappingKey ? (
+                        <>
+                          <span className="material-symbols-outlined text-[15px] mr-1">check</span>
+                          Update
+                        </>
+                      ) : (
+                        <>
+                          <span className="material-symbols-outlined text-[15px] mr-1">add</span>
+                          Add
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Mappings List */}
+                {Object.keys(modelMapping).length === 0 ? (
+                  <div className="flex flex-col items-center justify-center p-3 border border-dashed border-border rounded-lg text-center bg-surface/30">
+                    <span className="material-symbols-outlined text-[18px] text-text-muted mb-0.5 opacity-60">
+                      alt_route
+                    </span>
+                    <p className="text-[11px] text-text-muted">
+                      No model mappings configured. Codex requests with default model IDs will route to their default providers.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {Object.entries(modelMapping).map(([srcKey, dstVal]) => {
+                      const targetProviderId = dstVal.includes("/") ? dstVal.split("/")[0] : dstVal;
+                      const isEditing = editingMappingKey === srcKey;
+                      return (
+                        <div
+                          key={srcKey}
+                          className={`flex items-center justify-between gap-2 p-2.5 bg-surface/50 border rounded-lg transition-colors group ${
+                            isEditing ? "border-primary/60 bg-primary/5" : "border-border hover:border-border-hover"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className="size-6 flex items-center justify-center shrink-0 rounded bg-black/5 dark:bg-white/5 p-0.5">
+                              <ProviderIcon providerId={targetProviderId} size={18} fallbackText={targetProviderId.slice(0, 2).toUpperCase()} />
+                            </div>
+                            <div className="min-w-0 flex flex-col">
+                              <div className="flex items-center gap-1.5 text-xs font-mono">
+                                <span className="font-semibold text-text-main truncate">{srcKey}</span>
+                                <span className="material-symbols-outlined text-[13px] text-text-muted shrink-0">arrow_forward</span>
+                                <span className="text-primary truncate">{dstVal}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={() => handleStartEditMapping(srcKey)}
+                              className="p-1 text-text-muted hover:text-text-main rounded transition-colors"
+                              title="Edit mapping"
+                            >
+                              <span className="material-symbols-outlined text-[15px]">edit</span>
+                            </button>
+                            <button
+                              onClick={() => handleDeleteMapping(srcKey)}
+                              className="p-1 text-text-muted hover:text-red-500 rounded transition-colors"
+                              title="Delete mapping"
+                            >
+                              <span className="material-symbols-outlined text-[15px]">close</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               {/* Additional Models */}
               <div className="mt-4 pt-4 border-t border-border flex flex-col gap-3">
                 <div className="flex items-center justify-between">
@@ -637,6 +924,18 @@ default_subagent_model = "${effectiveSubagentModel}"
           activeProviders={activeProviders}
           modelAliases={modelAliases}
           title="Select Model for Codex CLI"
+        />
+      )}
+
+      {mappingModalOpen && (
+        <ModelSelectModal
+          isOpen={mappingModalOpen}
+          onClose={() => setMappingModalOpen(false)}
+          onSelect={handleModelSelectForMapping}
+          selectedModel={mappingTargetModel}
+          activeProviders={activeProviders}
+          modelAliases={modelAliases}
+          title="Select Target Model for Codex Mapping"
         />
       )}
 

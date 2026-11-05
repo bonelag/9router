@@ -67,6 +67,8 @@ const DEFAULT_SETTINGS = {
   pxpipeTimeoutMs: 15000,
   // Per-provider user header overrides applied at dispatch: { [providerId]: { headers: {..} } }
   providerOverrides: {},
+  // Codex CLI / App model mapping to redirect incoming standard model IDs
+  codexModelMapping: {},
 };
 
 async function readRaw() {
