@@ -238,3 +238,28 @@
 - `node --check` passed for the new service and modified executor. Targeted ESLint completed with no findings. `git diff --check` passed with only the pre-existing LF-to-CRLF warning for `open-sse/utils/responsesStreamHelpers.js`.
 - A root `.next` production build became stuck in webpack retry activity and was stopped after sustained CPU/memory use without artifact progress. The actual CLI production workflow `npm --prefix cli run build` subsequently compiled successfully and completed standalone packaging; build-time `better-sqlite3` fallback, one external temporary Devin trace, and missing Windows `du` were non-fatal warnings.
 - The user ran `deploy.bat` successfully. Read-only verification found the new middleware string in `F:\DEV\node22\node_modules\9router\app\.next-cli-build\server\chunks\3791.js`; the tray and server processes restarted at 2026-11-13 01:45:50 local time on port 20128.
+
+## 2026-11-13: Feature push and upstream 0.5.119 merge
+
+### Git workflow
+
+- The repository uses `master`, not `main`, as the default branch on both remotes. `origin` is `https://github.com/bonelag/9router`; `decolua` is `https://github.com/decolua/9router.git`.
+- Committed the Responses recovery and regional token-rate-limit work as `62769aef` (`feat: recover responses state and retry regional throttling`), fast-forwarded local `master`, and pushed it to `origin/master` before starting the upstream merge as requested.
+- Fetched upstream `decolua/master` at `1855aa44` (`v0.5.119`), advancing from the previously known `1339107e` (`v0.5.116`).
+
+### Conflict resolution
+
+- Merged `decolua/master` into the fork and resolved five content conflicts:
+  - `open-sse/providers/capabilities.js`: kept the complete upstream NVIDIA capability table and its explicit tools/thinking-disable metadata; restored upstream `qwq` non-disableable thinking and the specific Grok 4.6/4.5 limits instead of the older broad fork pattern.
+  - `src/app/(dashboard)/dashboard/providers/components/ModelsCard.js`: retained fork model enable/disable toggles and combined them with upstream Qoder display-name normalization.
+  - `src/app/api/providers/[id]/models/route.js`: retained fork custom-header/proxy-aware compatible-provider discovery and no-auth OpenCode catalog, while keeping upstream CommandCode discovery and Claude OAuth live catalog changes.
+  - `src/app/api/v1/models/route.js`: retained fork client response adaptation, compatible-provider custom fetch, deleted/disabled/override handling, and added upstream thinking-level publication.
+  - `src/shared/components/ModelSelectModal.js`: removed the duplicate local no-auth constant and used upstream `selectableModels.NO_AUTH_PROVIDER_IDS`, which correctly covers all no-auth AI providers rather than only the free-provider category.
+- No conflict markers or unmerged index entries remained after resolution.
+
+### Merge verification
+
+- Targeted post-merge Vitest coverage passed 165/165 tests across Responses recovery, exact-request retry, BaseExecutor network behavior, capabilities/combo aggregation, provider custom models, no-auth model selection, Qoder/CommandCode live catalogs, NVIDIA metadata, Grok context limits, and `/v1/models` thinking levels.
+- `node --test tests/unit/nvidia-params.test.js` passed 6/6 tests. Its package-type warning is non-fatal.
+- Server-side conflict files and the retry middleware passed syntax checks. Targeted ESLint found no server-side merge issues; `ModelSelectModal` and `ModelsCard` still trigger the repository's existing React `setState-in-effect` rules, unrelated to the merge resolution.
+- `npm --prefix cli run build` completed successfully at version `0.5.119`, including Next.js compilation, static generation, standalone artifact copying, SQLite fallback packaging, and MITM bundling. The external temporary Devin trace, unavailable build-time `better-sqlite3` binding, and missing Windows `du` utility remained non-fatal warnings.
