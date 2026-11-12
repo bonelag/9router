@@ -5,6 +5,7 @@ import { applyCustomHeaders } from "../utils/customHeaders.js";
 import { dbg } from "../utils/debugLog.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
 import { resolveOpenAICompatibleApiType } from "../services/provider.js";
+import { retryTokenRateLimitResponse } from "../services/tokenRateLimitRetry.js";
 
 /**
  * BaseExecutor - Base class for provider executors
@@ -107,6 +108,7 @@ export class BaseExecutor {
     let lastStatus = 0;
     const retryAttemptsByUrl = {};
     const forceFreshSocketByUrl = {};
+    const connectTimeoutErrors = new WeakSet();
 
     // Merge default retry config with provider-specific config
     const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
@@ -138,33 +140,60 @@ export class BaseExecutor {
 
       if (!retryAttemptsByUrl[urlIndex]) retryAttemptsByUrl[urlIndex] = 0;
 
-      // Abort if upstream doesn't return response headers within connection timeout
-      const connectCtrl = new AbortController();
       const timeoutMs = this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS;
-      const connectTimer = setTimeout(() => connectCtrl.abort(new Error("fetch connect timeout")), timeoutMs);
-      const mergedSignal = signal ? AbortSignal.any([signal, connectCtrl.signal]) : connectCtrl.signal;
 
       try {
         const bodyStr = JSON.stringify(transformedBody);
-        const fetchT0 = Date.now();
-        dbg("FETCH", `${this.provider.toUpperCase()} → ${url} | body=${bodyStr.length}B | connectTimeout=${timeoutMs}ms`);
         const effectiveProxyOptions = forceFreshSocketByUrl[urlIndex]
           ? { ...(proxyOptions || {}), forceFreshSocket: true }
           : proxyOptions;
-        const response = await proxyAwareFetch(url, {
-          method: "POST",
-          headers,
-          body: bodyStr,
-          signal: mergedSignal,
-          bypassNextjsFetch: true,
-          // Protocol adapters that need their own transport (opencode's TLS
-          // fingerprint) override the direct path; proxies still take priority.
-          ...(directFetch ? { directFetch } : {}),
-        }, effectiveProxyOptions);
-        clearTimeout(connectTimer);
-        const ct = response.headers?.get?.("content-type") || "";
-        const cl = response.headers?.get?.("content-length") || "?";
-        dbg("FETCH", `${this.provider.toUpperCase()} ← ${response.status} | ttft=${Date.now() - fetchT0}ms | ct=${ct} | cl=${cl}`);
+        const sendExact = async () => {
+          // Each replay gets its own connect timeout while preserving the exact
+          // URL, headers, serialized body, direct transport, and proxy selection.
+          const connectCtrl = new AbortController();
+          const connectTimer = setTimeout(() => connectCtrl.abort(new Error("fetch connect timeout")), timeoutMs);
+          const mergedSignal = signal ? AbortSignal.any([signal, connectCtrl.signal]) : connectCtrl.signal;
+          const fetchT0 = Date.now();
+          dbg("FETCH", `${this.provider.toUpperCase()} → ${url} | body=${bodyStr.length}B | connectTimeout=${timeoutMs}ms`);
+          try {
+            const fetched = await proxyAwareFetch(url, {
+              method: "POST",
+              headers,
+              body: bodyStr,
+              signal: mergedSignal,
+              bypassNextjsFetch: true,
+              // Protocol adapters that need their own transport (opencode's TLS
+              // fingerprint) override the direct path; proxies still take priority.
+              ...(directFetch ? { directFetch } : {}),
+            }, effectiveProxyOptions);
+            const ct = fetched.headers?.get?.("content-type") || "";
+            const cl = fetched.headers?.get?.("content-length") || "?";
+            dbg("FETCH", `${this.provider.toUpperCase()} ← ${fetched.status} | ttft=${Date.now() - fetchT0}ms | ct=${ct} | cl=${cl}`);
+            return fetched;
+          } catch (error) {
+            if (connectCtrl.signal.aborted && error?.name === "AbortError" && error && typeof error === "object") {
+              connectTimeoutErrors.add(error);
+            }
+            throw error;
+          } finally {
+            clearTimeout(connectTimer);
+          }
+        };
+
+        const rateLimitResult = await retryTokenRateLimitResponse({
+          response: await sendExact(),
+          resend: sendExact,
+          endpoint: url,
+          signal,
+          log,
+        });
+        const response = rateLimitResult.response;
+
+        // The exact-message middleware owns this error family. After five
+        // same-endpoint retries, do not let status retry/fallback add more calls.
+        if (rateLimitResult.exhausted) {
+          return { response, url, headers, transformedBody };
+        }
 
         if (await tryRetry(urlIndex, response.status, `status ${response.status}`, response)) {
           // A 502 from an edge is typically a poisoned keep-alive socket — retry fresh.
@@ -181,9 +210,8 @@ export class BaseExecutor {
 
         return { response, url, headers, transformedBody };
       } catch (error) {
-        clearTimeout(connectTimer);
         lastError = error;
-        const isConnectTimeout = connectCtrl.signal.aborted && error.name === "AbortError";
+        const isConnectTimeout = error && typeof error === "object" && connectTimeoutErrors.has(error);
         dbg("FETCH", `${this.provider.toUpperCase()} ✖ ${error.name}: ${error.message}${isConnectTimeout ? " (connect timeout)" : ""}`);
         // Connect timeout is internal — convert to retryable network error, don't propagate AbortError
         if (error.name === "AbortError" && !isConnectTimeout) throw error;

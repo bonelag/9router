@@ -28,6 +28,25 @@ export const DEFAULT_ERROR_MESSAGES = {
   504: "Gateway timeout"
 };
 
+// Azure/OpenAI pool-level token throttling returned by AgentRouter-compatible
+// gateways. The same model identifier is repeated on both sides of "for".
+export const TOKEN_RATE_LIMIT_ERROR_PATTERN = /(?<raw>(?:\[Error\]\s*)?Your requests to\s+(?<model>\S+)\s+for\s+\k<model>\s+in\s+(?<region>[A-Za-z0-9][A-Za-z0-9._-]*)\s+have exceeded token rate limit\.)/i;
+
+// Frames that carry stream setup metadata but no client-visible completion yet.
+// Holding these briefly lets the retry middleware consume an early SSE error
+// before response headers/body bytes are committed to the downstream client.
+export const TOKEN_RATE_LIMIT_SSE_SETUP_EVENTS = new Set([
+  "ping",
+  "message_start",
+  "content_block_start",
+  "response.created",
+  "response.queued",
+  "response.in_progress",
+  "response.output_item.added",
+  "response.content_part.added",
+  "response.reasoning_summary_part.added",
+]);
+
 // Exponential backoff config for rate limits
 export const BACKOFF_CONFIG = {
   base: 2000,

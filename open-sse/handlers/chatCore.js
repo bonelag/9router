@@ -33,6 +33,8 @@ import { stripUnsupportedModalities } from "../translator/concerns/modality.js";
 import { prefetchRemoteImages } from "../translator/concerns/prefetch.js";
 import { defaultClaudeToolType, shouldDefaultClaudeToolType } from "../translator/concerns/toolCall.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
+import { createResponsesHistoryContext, observeResponsesResponse } from "../services/responsesHistory.js";
+import { recoverResponsesUpstream } from "../services/responsesRecovery.js";
 
 /**
  * Core chat handler - shared between SSE and Worker
@@ -61,7 +63,7 @@ export function stripContinuityFields(body) {
   return body;
 }
 
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, headroomTimeoutMs, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, customPromptEnabled, customPrompt, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, providerOverrides, modelOverride }) {
+export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, headroomTimeoutMs, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, customPromptEnabled, customPrompt, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, providerOverrides, modelOverride, requestSignal }) {
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
   // Stable per-session color so all lines of one CLI conversation share a tag
@@ -79,6 +81,15 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Check for bypass patterns (warmup, skip, cc naming)
   const bypassResponse = handleBypassRequest(body, model, userAgent, ccFilterNaming);
   if (bypassResponse) return bypassResponse;
+
+  // Observation never changes normal requests. Reconstruction is only used
+  // after an upstream status/error message verifies a backend state mismatch.
+  const responsesHistoryContext = sourceFormat === FORMATS.OPENAI_RESPONSES
+    ? createResponsesHistoryContext(body, apiKey)
+    : null;
+  const observeResult = (result) => result?.response && responsesHistoryContext
+    ? { ...result, response: observeResponsesResponse(result.response, responsesHistoryContext) }
+    : result;
 
   const alias = PROVIDER_ID_TO_ALIAS[provider] || provider;
   const modelTargetFormat = getModelTargetFormat(alias, model);
@@ -410,28 +421,38 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Most executors return their registry format. Cursor AgentService is an
   // exception: it is decoded by the executor into OpenAI-compatible output.
   let providerResponseFormat = targetFormat;
-  try {
+  const upstreamSignal = requestSignal
+    ? AbortSignal.any([requestSignal, streamController.signal])
+    : streamController.signal;
+  const recoveryContext = responsesHistoryContext || (targetFormat === FORMATS.OPENAI_RESPONSES
+    ? createResponsesHistoryContext(translatedBody, apiKey)
+    : null);
+  const executeUpstream = async (requestBody) => {
     const result = await executor.execute({
-      model,
-      body: translatedBody,
-      stream,
-      credentials,
-      providerSessionId: sessionSeed,
-      clientTool,
-      signal: streamController.signal,
-      log,
-      proxyOptions,
-      providerOverrides,
+      model, body: requestBody, stream, credentials, providerSessionId: sessionSeed,
+      clientTool, signal: upstreamSignal, log, proxyOptions, providerOverrides,
     });
+    const renamedToolNames = takeRenamedToolNames(requestBody);
+    if (renamedToolNames?.size) toolNameMap = new Map([...(toolNameMap || []), ...renamedToolNames]);
+    return result;
+  };
+  const executeWithRecovery = async () => {
+    const result = await executeUpstream(translatedBody);
+    if ((result.responseFormat || targetFormat) !== FORMATS.OPENAI_RESPONSES) return result;
+    const recovered = await recoverResponsesUpstream({
+      result, body: translatedBody, context: recoveryContext,
+      execute: executeUpstream, signal: upstreamSignal, log,
+    });
+    if (recovered.recoveryBody) translatedBody = recovered.recoveryBody;
+    return recovered;
+  };
+  try {
+    const result = await executeWithRecovery();
     providerResponse = result.response;
     providerUrl = result.url;
     providerHeaders = result.headers;
     finalBody = result.transformedBody;
     providerResponseFormat = result.responseFormat || targetFormat;
-    const renamedToolNames = takeRenamedToolNames(translatedBody);
-    if (renamedToolNames?.size) {
-      toolNameMap = new Map([...(toolNameMap || []), ...renamedToolNames]);
-    }
     reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
   } catch (error) {
     trackPendingRequest(model, provider, connectionId, false, true);
@@ -480,22 +501,14 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
           try { await onCredentialsRefreshed(newCredentials); } catch (e) { log?.warn?.("TOKEN", `onCredentialsRefreshed failed: ${e.message}`); }
         }
         try {
-          const retryResult = await executor.execute({
-            model,
-            body: translatedBody,
-            stream,
-            credentials,
-            providerSessionId: sessionSeed,
-            clientTool,
-            signal: streamController.signal,
-            log,
-            proxyOptions,
-            providerOverrides,
-          });
+          const retryResult = await executeWithRecovery();
           if (retryResult.response.ok) {
             providerResponse = retryResult.response;
             providerUrl = retryResult.url;
+            providerHeaders = retryResult.headers;
+            finalBody = retryResult.transformedBody;
             providerResponseFormat = retryResult.responseFormat || targetFormat;
+            reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
           }
         } catch { log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`); }
       } else {
@@ -541,19 +554,19 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // this path — handleForcedSSEToJson returns null when the body is not SSE.
   if (!clientRequestedStreaming && (providerRequiresStreaming || providerResponseFormat === FORMATS.OPENAI_RESPONSES)) {
     const result = await handleForcedSSEToJson({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, customToolNames, toolNameMap, trackDone, appendLog });
-    if (result) { streamController.handleComplete(); return result; }
+    if (result) { streamController.handleComplete(); return observeResult(result); }
   }
 
   // True non-streaming response
   if (!stream) {
     const result = await handleNonStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, reqLogger, toolNameMap, customToolNames, trackDone, appendLog });
     streamController.handleComplete();
-    return result;
+    return observeResult(result);
   }
 
   // Streaming response
   const { onStreamComplete, streamDetailId } = buildOnStreamComplete({ ...sharedCtx });
-  return handleStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, userAgent, reqLogger, toolNameMap, customToolNames, streamController, onStreamComplete, streamDetailId, credentials });
+  return observeResult(await handleStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, userAgent, reqLogger, toolNameMap, customToolNames, streamController, onStreamComplete, streamDetailId, credentials }));
 }
 
 export function isTokenExpiringSoon(expiresAt, bufferMs = 5 * 60 * 1000) {

@@ -17,13 +17,19 @@ export const CLAUDE_DELTA = {
 // Every one of these starts with RESPONSES_EVENT_PREFIX.
 export const RESPONSES_EVENT_PREFIX = "response.";
 export const RESPONSES_EVENT = {
+  CREATED: "response.created",
+  QUEUED: "response.queued",
+  IN_PROGRESS: "response.in_progress",
   OUTPUT_ITEM_ADDED: "response.output_item.added",
   OUTPUT_ITEM_DONE: "response.output_item.done",
   OUTPUT_TEXT_DELTA: "response.output_text.delta",
   OUTPUT_TEXT_DONE: "response.output_text.done",
   FUNCTION_CALL_ARGUMENTS_DELTA: "response.function_call_arguments.delta",
+  FUNCTION_CALL_ARGUMENTS_DONE: "response.function_call_arguments.done",
   CUSTOM_TOOL_CALL_INPUT_DELTA: "response.custom_tool_call_input.delta",
+  CUSTOM_TOOL_CALL_INPUT_DONE: "response.custom_tool_call_input.done",
   COMPLETED: "response.completed",
   INCOMPLETE: "response.incomplete",
   FAILED: "response.failed",
+  ERROR: "error",
 };

@@ -55,10 +55,33 @@ export const STREAM_STALL_TIMEOUT_MS = envMs("STREAM_STALL_TIMEOUT_MS", 360 * 10
 // Time-to-first-token timeout (prompt prefill). Env: STREAM_FIRST_CHUNK_TIMEOUT_MS.
 export const STREAM_FIRST_CHUNK_TIMEOUT_MS = envMs("STREAM_FIRST_CHUNK_TIMEOUT_MS", 200 * 1000);
 
+// Exact-request retry for the Azure/OpenAI regional token-rate-limit message.
+// This intentionally ignores Retry-After and uses a fixed linear schedule.
+export const TOKEN_RATE_LIMIT_RETRY_CONFIG = Object.freeze({
+  maxRetries: 5,
+  baseDelayMs: 5 * 1000,
+  primeTimeoutMs: STREAM_FIRST_CHUNK_TIMEOUT_MS,
+  maxInspectBytes: 256 * 1024,
+});
+
 // Combo empty-content failover: how long a 2xx stream may be held while waiting for its first
 // content-bearing frame before committing to that model (fail-open on expiry).
 // Env: EMPTY_PEEK_DEADLINE_MS.
 export const EMPTY_PEEK_DEADLINE_MS = envMs("EMPTY_PEEK_DEADLINE_MS", 45 * 1000);
+
+// Responses state recovery is reactive: only verified backend/resource errors
+// may replay a request. History stays local, bounded, and isolated by API key.
+export const RESPONSES_RECOVERY_CONFIG = {
+  enabled: !["0", "false", "off", "no"].includes(String(process.env.RESPONSES_RECOVERY_ENABLED ?? "true").toLowerCase()),
+  maxRetries: 1,
+  primeTimeoutMs: envMs("RESPONSES_RECOVERY_PRIME_TIMEOUT_MS", 3 * 1000),
+  maxInspectBytes: 256 * 1024,
+  historyTtlMs: envMs("RESPONSES_RECOVERY_HISTORY_TTL_MS", 24 * 60 * 60 * 1000),
+  historyMaxEntries: 128,
+  historyMaxBytes: 64 * 1024 * 1024,
+  historyMaxEntryBytes: 16 * 1024 * 1024,
+  historyMaxItems: 10000,
+};
 
 // Fetch connect timeout: abort if upstream doesn't return response headers within this duration
 export const FETCH_CONNECT_TIMEOUT_MS = envMs("FETCH_CONNECT_TIMEOUT_MS", 60 * 1000);

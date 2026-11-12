@@ -39,12 +39,14 @@ export const RESPONSES_ITEM = {
   FUNCTION_CALL_OUTPUT: "function_call_output",
   CUSTOM_TOOL_CALL: "custom_tool_call",
   CUSTOM_TOOL_CALL_OUTPUT: "custom_tool_call_output",
+  ITEM_REFERENCE: "item_reference",
   ADDITIONAL_TOOLS: "additional_tools",
   REASONING: "reasoning",
   OUTPUT_TEXT: "output_text",
   INPUT_TEXT: "input_text",
   INPUT_IMAGE: "input_image",
   SUMMARY_TEXT: "summary_text",
+  ENCRYPTED_CONTENT: "encrypted_content",
 };
 
 // Valid OpenAI block types (used by filterToOpenAIFormat).
