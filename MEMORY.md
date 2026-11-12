@@ -263,3 +263,4 @@
 - `node --test tests/unit/nvidia-params.test.js` passed 6/6 tests. Its package-type warning is non-fatal.
 - Server-side conflict files and the retry middleware passed syntax checks. Targeted ESLint found no server-side merge issues; `ModelSelectModal` and `ModelsCard` still trigger the repository's existing React `setState-in-effect` rules, unrelated to the merge resolution.
 - `npm --prefix cli run build` completed successfully at version `0.5.119`, including Next.js compilation, static generation, standalone artifact copying, SQLite fallback packaging, and MITM bundling. The external temporary Devin trace, unavailable build-time `better-sqlite3` binding, and missing Windows `du` utility remained non-fatal warnings.
+- Created merge commit `7bfa709f` (`Merge remote-tracking branch 'decolua/master'`) and pushed the resolved 0.5.119 merge to `origin/master`.
