@@ -264,3 +264,23 @@
 - Server-side conflict files and the retry middleware passed syntax checks. Targeted ESLint found no server-side merge issues; `ModelSelectModal` and `ModelsCard` still trigger the repository's existing React `setState-in-effect` rules, unrelated to the merge resolution.
 - `npm --prefix cli run build` completed successfully at version `0.5.119`, including Next.js compilation, static generation, standalone artifact copying, SQLite fallback packaging, and MITM bundling. The external temporary Devin trace, unavailable build-time `better-sqlite3` binding, and missing Windows `du` utility remained non-fatal warnings.
 - Created merge commit `7bfa709f` (`Merge remote-tracking branch 'decolua/master'`) and pushed the resolved 0.5.119 merge to `origin/master`.
+
+## 2026-11-14: Basic Chat model catalog switched to `/v1/models`
+
+### Diagnosis and behavior
+
+- `dashboard/basic-chat` previously assembled its picker from static registry models, saved aliases/custom models, and one `/api/providers/{connectionId}/models` request per active connection. The per-connection requests queried upstream catalogs and could expose models that 9Router's own public catalog had filtered out.
+- Read-only inspection of the running port-20128 instance reproduced the discrepancy: the Qronos upstream-backed picker showed 16 models, while `GET /v1/models` published only `qro/claude-haiku-5.5` for owner `qro`.
+- Basic Chat now treats same-origin `GET /v1/models` as the sole model-list authority. `GET /api/providers` remains only for connected-provider metadata and grouping. It no longer fetches `/api/providers/{connectionId}/models`, `/api/models/alias`, or `/api/models/custom`.
+- The picker intentionally keeps its existing "connected providers" scope: catalog entries are matched back to active connections by `owned_by`, routable ID prefix, configured compatible-provider prefix, UI alias, transport alias, or provider ID. Unmatched catalog entries such as combos, no-auth providers without a connection, and Codex mapping-only entries are not added.
+- Routable model IDs from `/v1/models` are preserved exactly when sending chat requests. Display labels strip only the matched provider prefix, so nested IDs such as `mod/moonshotai/Kimi-K3.1-Pro` remain readable and routable.
+- The default `/v1/models` route is the LLM catalog. Basic Chat does not make an additional `/v1/models/image` request, matching the requested endpoint exactly; image-only models therefore appear only if the default catalog publishes them.
+
+### Implementation and verification
+
+- Added `src/shared/utils/basicChatModelCatalog.js` for response-shape parsing, active-connection alias indexing, provider grouping, exact-ID normalization, deduplication, display-name resolution, and existing image-model heuristics.
+- Simplified `BasicChatPageClient.js` model loading to two parallel same-origin requests: `/api/providers` and `/v1/models`. Removed the former static/live/alias/custom merge and all per-provider model requests from the component.
+- Added `tests/unit/basic-chat-model-catalog.test.js`, including a source contract that prevents reintroducing per-provider/alias/custom fetches and behavior coverage for compatible-provider prefixes, transport aliases, nested model IDs, inactive providers, deduplication, and bare IDs matched through `owned_by`.
+- Targeted Vitest verification passed 43/43 tests across the new catalog helper, `/v1/models` client adaptation, route shadow deduplication, and provider custom-model utilities.
+- Targeted ESLint passed for the new helper and test. Full-file lint of `BasicChatPageClient.js` still reports its two pre-existing React `setState-in-effect` findings and existing `<img>` warnings; the new code introduced no additional lint finding.
+- The production build reached webpack but failed on an unrelated Windows temporary-socket permission error: `EACCES: permission denied, readlink ...\\Temp\\socket_381660727`, followed by Next's `FlightClientEntryPlugin` secondary error. A separate webpack development compiler started on port 20129, compiled `/(dashboard)/dashboard/basic-chat/page` successfully, and served the page with HTTP 200. The expected `better-sqlite3` binding fallback to `node:sqlite` was non-fatal. The temporary development server was stopped, and its generated untracked root `AGENTS.md` was removed.

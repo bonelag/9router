@@ -11,10 +11,10 @@ import {
   patchActiveAssistantVersion,
   selectAssistantVersion,
 } from "@/shared/utils/basicChatMessages";
-import { getModelsByProviderId } from "@/shared/constants/models";
-import { AI_PROVIDERS, isAnthropicCompatibleProvider, isOpenAICompatibleProvider } from "@/shared/constants/providers";
-import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
-import { getModelType, PROVIDER_ID_TO_ALIAS } from "open-sse/config/providerModels.js";
+import {
+  buildBasicChatProviderGroups,
+  parseBasicChatModelsPayload,
+} from "@/shared/utils/basicChatModelCatalog";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import hljs from "highlight.js";
@@ -87,29 +87,6 @@ const STORAGE_KEYS = {
   mode: "basic-chat.mode",
 };
 
-// Regex fallback for image-generation model ids not covered by capabilities/registry.
-const IMAGE_MODEL_RE = /image|imagen|flux|sdxl|dall|stable-diffusion|nanobanana|nano-banana|recraft/i;
-
-// Detect whether a model produces images (image-generation), so the UI can route
-// it to /v1/images/generations instead of /v1/chat/completions. Client-side, mirrors
-// chatCore's isImageGenModel check but broadened for model-name patterns.
-function detectImageGen(providerId, requestModel) {
-  const bareId = String(requestModel || "");
-  const bare = bareId.includes("/") ? bareId.slice(bareId.indexOf("/") + 1) : bareId;
-  try {
-    const caps = getCapabilitiesForModel(providerId, bare);
-    if (caps?.imageOutput) return true;
-  } catch {
-    // capabilities lookup failed — fall through to registry/name checks
-  }
-  try {
-    if (getModelType(providerId, bare) === "image") return true;
-  } catch {
-    // registry lookup failed — fall through to name check
-  }
-  return IMAGE_MODEL_RE.test(bare);
-}
-
 // Thinking levels shown in the input toolbar. `value` is sent as `reasoning_effort`
 // ("none" disables thinking); the gateway maps it to each provider's native format.
 // Always displayed regardless of whether the active model supports reasoning.
@@ -149,13 +126,6 @@ function textValue(value) {
     }
   }
   return String(value);
-}
-
-function humanize(value = "") {
-  return String(value)
-    .replace(/[-_]/g, " ")
-    .replace(/\b\w/g, (char) => char.toUpperCase())
-    .trim() || "Unknown";
 }
 
 function formatRelativeTime(value) {
@@ -381,151 +351,6 @@ function cloneSession(session) {
   };
 }
 
-function getProviderLabel(connection) {
-  return connection?.name || humanize(connection?.provider || connection?.id || "provider");
-}
-
-// Display name for a *provider group* header in the model picker.
-// Prefer the registry's provider name (e.g. "OpenAI Codex"); for dynamic
-// compatible nodes fall back to the node's own name, never the raw account name.
-function getProviderDisplayName(providerId, connection) {
-  const registryName = AI_PROVIDERS[providerId]?.name;
-  if (registryName) return registryName;
-  if (isOpenAICompatibleProvider(providerId) || isAnthropicCompatibleProvider(providerId)) {
-    return connection?.providerSpecificData?.nodeName || connection?.name || humanize(providerId);
-  }
-  return humanize(providerId);
-}
-
-function getModelDisplayId(connection, modelId, requestModel) {
-  const providerId = connection?.provider || connection?.id || "";
-  const isCompatible = isOpenAICompatibleProvider(providerId) || isAnthropicCompatibleProvider(providerId);
-  const providerPrefix = textValue(connection?.providerSpecificData?.prefix).trim();
-  if (!isCompatible || !providerPrefix) return requestModel;
-
-  let bareId = textValue(modelId).trim();
-  for (const prefix of [providerId, providerPrefix]) {
-    if (prefix && bareId.startsWith(`${prefix}/`)) {
-      bareId = bareId.slice(prefix.length + 1);
-      break;
-    }
-  }
-
-  return bareId ? `${providerPrefix}/${bareId}` : requestModel;
-}
-
-function normalizeStaticModel(model, connection) {
-  if (!model?.id) return null;
-  const requestModel = `${connection.provider}/${model.id}`;
-  return {
-    id: requestModel,
-    requestModel,
-    displayModel: getModelDisplayId(connection, model.id, requestModel),
-    name: model.name || model.id,
-    providerId: connection.provider,
-    providerName: getProviderLabel(connection),
-    source: "static",
-    isImageGen: detectImageGen(connection.provider, model.id),
-  };
-}
-
-function normalizeLiveModel(model, connection) {
-  const rawId = typeof model === "string" ? model : model?.id || model?.name || model?.model || "";
-  if (!rawId) return null;
-
-  const displayName = typeof model === "string"
-    ? model
-    : model?.name || model?.displayName || rawId;
-
-  let requestModel = rawId;
-  // Prefix "provider/" when the live id has no slash, so the gateway routes to the
-  // right provider. Without it, a bare id (e.g. "grok-4.5") falls through parseModel's
-  // prefix inference and defaults to "openai" → "No active credentials" error.
-  if (!rawId.includes("/")) {
-    requestModel = `${connection.provider}/${rawId}`;
-  }
-
-  return {
-    id: requestModel,
-    requestModel,
-    displayModel: getModelDisplayId(connection, rawId, requestModel),
-    name: displayName,
-    providerId: connection.provider,
-    providerName: getProviderLabel(connection),
-    source: "live",
-    isImageGen: detectImageGen(connection.provider, rawId),
-  };
-}
-
-function parseProviderModelsPayload(data) {
-  if (Array.isArray(data?.models)) return data.models;
-  if (Array.isArray(data?.data)) return data.data;
-  if (Array.isArray(data?.results)) return data.results;
-  if (Array.isArray(data)) return data;
-  return [];
-}
-
-// Build a model entry from a user-defined alias ("alias" → "provider/model").
-// Custom (anthropic/openai-compatible) nodes have NO static models and their live
-// /models fetch is usually empty, so their models only surface via aliases + custom
-// models — same source ModelSelectModal reads. Without this, custom-claude never shows.
-function normalizeAliasModel(aliasName, fullModel, connection) {
-  const providerId = connection.provider;
-  const prefixes = [providerId, PROVIDER_ID_TO_ALIAS[providerId]].filter(Boolean);
-  const prefix = prefixes.find((p) => fullModel.startsWith(`${p}/`));
-  if (!prefix) return null;
-  const bareId = fullModel.slice(prefix.length + 1);
-  if (!bareId) return null;
-  // Route by "nodeId/model": getModelInfo resolves provider=nodeId (credential key).
-  const requestModel = `${providerId}/${bareId}`;
-  return {
-    id: requestModel,
-    requestModel,
-    displayModel: getModelDisplayId(connection, bareId, requestModel),
-    name: aliasName || bareId,
-    providerId,
-    providerName: getProviderLabel(connection),
-    source: "alias",
-    isImageGen: detectImageGen(providerId, bareId),
-  };
-}
-
-// Build a model entry from a custom model registered via /api/models/custom.
-function normalizeCustomModel(model, connection) {
-  const bareId = model?.id;
-  if (!bareId) return null;
-  const providerId = connection.provider;
-  const requestModel = `${providerId}/${bareId}`;
-  return {
-    id: requestModel,
-    requestModel,
-    displayModel: getModelDisplayId(connection, bareId, requestModel),
-    name: model.name || bareId,
-    providerId,
-    providerName: getProviderLabel(connection),
-    source: "custom",
-    isImageGen: model.type === "image" || detectImageGen(providerId, bareId),
-  };
-}
-
-function dedupeModels(models, providerId) {
-  const map = new Map();
-  // Same model can arrive twice per provider: as a static entry ("codex/gpt-5.5")
-  // and a live /models entry (bare "gpt-5.5"). Collapse by the bare model id so the
-  // prefixed variant (pushed first → the one that actually routes) wins.
-  const bareKey = (model) => {
-    const raw = String(model.requestModel || model.id || "");
-    const stripped = providerId && raw.startsWith(`${providerId}/`) ? raw.slice(providerId.length + 1) : raw;
-    return stripped.toLowerCase();
-  };
-  for (const model of models) {
-    if (!model?.id) continue;
-    const key = bareKey(model);
-    if (!map.has(key)) map.set(key, model);
-  }
-  return Array.from(map.values());
-}
-
 export default function BasicChatPageClient() {
   const [providerGroups, setProviderGroups] = useState([]);
   const [loadingData, setLoadingData] = useState(true);
@@ -621,8 +446,20 @@ export default function BasicChatPageClient() {
       setLoadError("");
 
       try {
-        const providersRes = await fetch("/api/providers", { cache: "no-store" });
+        const [providersRes, modelsRes] = await Promise.all([
+          fetch("/api/providers", { cache: "no-store" }),
+          fetch("/v1/models", { cache: "no-store" }),
+        ]);
         const providersData = await providersRes.json().catch(() => ({}));
+        const modelsData = await modelsRes.json().catch(() => ({}));
+
+        if (!providersRes.ok) {
+          throw new Error(textValue(providersData?.error?.message || providersData?.error) || "Failed to load providers.");
+        }
+        if (!modelsRes.ok) {
+          throw new Error(textValue(modelsData?.error?.message || modelsData?.error) || "Failed to load 9Router models.");
+        }
+
         const connections = Array.isArray(providersData.connections)
           ? providersData.connections.filter((connection) => connection?.isActive !== false)
           : [];
@@ -635,102 +472,13 @@ export default function BasicChatPageClient() {
           return;
         }
 
-        // User-defined aliases + custom models are the ONLY model source for custom
-        // (anthropic/openai-compatible) nodes — they have no static models and their
-        // live /models fetch is usually empty. Fetch both so custom-claude shows up.
-        const [aliasData, customData] = await Promise.all([
-          fetch("/api/models/alias", { cache: "no-store" }).then((r) => r.json()).catch(() => ({})),
-          fetch("/api/models/custom", { cache: "no-store" }).then((r) => r.json()).catch(() => ({})),
-        ]);
-        const modelAliases = aliasData?.aliases && typeof aliasData.aliases === "object" ? aliasData.aliases : {};
-        const customModels = Array.isArray(customData?.models) ? customData.models : [];
-
-        const providerMap = new Map();
-
-        for (const connection of connections) {
-          const providerId = connection.provider || connection.id;
-          const providerName = getProviderDisplayName(providerId, connection);
-          const providerType = isOpenAICompatibleProvider(providerId)
-            ? "openai-compatible"
-            : isAnthropicCompatibleProvider(providerId)
-              ? "anthropic-compatible"
-              : providerId;
-
-          if (!providerMap.has(providerId)) {
-            providerMap.set(providerId, {
-              providerId,
-              providerName,
-              providerType,
-              connections: [],
-              models: [],
-            });
-          }
-
-          const group = providerMap.get(providerId);
-          group.providerName = group.providerName || providerName;
-          group.providerType = group.providerType || providerType;
-          group.connections.push(connection);
-
-          const staticModels = getModelsByProviderId(providerId)
-            .map((model) => normalizeStaticModel(model, connection))
-            .filter(Boolean);
-          group.models.push(...staticModels);
-        }
-
-        // Alias + custom models are per-provider, not per-connection — add them once per
-        // group (a provider with N accounts would otherwise re-scan/duplicate them N times).
-        for (const group of providerMap.values()) {
-          const { providerId } = group;
-          const connection = group.connections[0];
-          if (!connection) continue;
-
-          // Aliases stored as "providerId/model" or "alias/model".
-          const aliasModels = Object.entries(modelAliases)
-            .map(([aliasName, fullModel]) =>
-              typeof fullModel === "string" ? normalizeAliasModel(aliasName, fullModel, connection) : null
-            )
-            .filter(Boolean);
-          group.models.push(...aliasModels);
-
-          // Custom models registered via "Add Model" (providerAlias = raw providerId).
-          const providerAlias = PROVIDER_ID_TO_ALIAS[providerId] || providerId;
-          const customForProvider = customModels
-            .filter((model) => model?.providerAlias === providerId || model?.providerAlias === providerAlias)
-            .map((model) => normalizeCustomModel(model, connection))
-            .filter(Boolean);
-          group.models.push(...customForProvider);
-        }
-
-        const liveResults = await Promise.all(
-          connections.map(async (connection) => {
-            try {
-              const response = await fetch(`/api/providers/${connection.id}/models`, { cache: "no-store" });
-              const data = await response.json().catch(() => ({}));
-              if (!response.ok) return { connection, models: [] };
-              const models = parseProviderModelsPayload(data)
-                .map((model) => normalizeLiveModel(model, connection))
-                .filter(Boolean);
-              return { connection, models };
-            } catch {
-              return { connection, models: [] };
-            }
-          })
+        // /v1/models is the authoritative catalog. It already applies 9Router's
+        // provider availability, enabled/disabled, deleted, alias, custom-model,
+        // and live-catalog rules, so Basic Chat must not query providers individually.
+        const normalized = buildBasicChatProviderGroups(
+          connections,
+          parseBasicChatModelsPayload(modelsData),
         );
-
-        for (const result of liveResults) {
-          const providerId = result.connection.provider || result.connection.id;
-          const group = providerMap.get(providerId);
-          if (!group) continue;
-          group.models.push(...result.models);
-        }
-
-        const normalized = Array.from(providerMap.values())
-          .map((group) => ({
-            ...group,
-            models: dedupeModels(group.models, group.providerId).sort((a, b) => a.name.localeCompare(b.name)),
-          }))
-          .filter((group) => group.models.length > 0)
-          .sort((a, b) => a.providerName.localeCompare(b.providerName));
 
         if (!cancelled) {
           setProviderGroups(normalized);
