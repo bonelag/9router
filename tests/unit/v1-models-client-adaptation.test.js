@@ -461,6 +461,8 @@ describe("Route integration GET /v1/models", () => {
     const deletedDb = await import("../../src/lib/deletedModelsDb.js");
     const spyDisabled = vi.spyOn(disabledDb, "getDisabledModels").mockResolvedValue({});
     const spyDeleted = vi.spyOn(deletedDb, "getDeletedModels").mockResolvedValue({});
+    // Stub live opencode fetch so static catalog fallback is tested deterministically offline.
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }));
     try {
       const { GET } = await import("../../src/app/api/v1/models/route.js");
       const req = new Request("https://router.test/v1/models", {
@@ -475,6 +477,7 @@ describe("Route integration GET /v1/models", () => {
       expect(opencodeModel.capabilities?.supports_reasoning).toBe(true);
       expect(opencodeModel.capabilities?.context_length).toBe(1048576);
     } finally {
+      fetchSpy.mockRestore();
       spyDisabled.mockRestore();
       spyDeleted.mockRestore();
     }
@@ -482,12 +485,13 @@ describe("Route integration GET /v1/models", () => {
 
   it("does not fetch upstream for custom providers", async () => {
     const { buildModelsList } = await import("../../src/app/api/v1/models/route.js");
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }));
     try {
       const models = await buildModelsList(["llm"]);
       expect(Array.isArray(models)).toBe(true);
+      // Upstream LIVE_MODEL_RESOLVERS.opencode fetches opencode.ai/zen/v1/models; custom providers must not fetch /models.
       const calledModelsUrl = fetchSpy.mock.calls.some(
-        ([url]) => typeof url === "string" && url.endsWith("/models")
+        ([url]) => typeof url === "string" && url.endsWith("/models") && !url.startsWith("https://opencode.ai/")
       );
       expect(calledModelsUrl).toBe(false);
     } finally {

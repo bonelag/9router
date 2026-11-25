@@ -284,3 +284,29 @@
 - Targeted Vitest verification passed 43/43 tests across the new catalog helper, `/v1/models` client adaptation, route shadow deduplication, and provider custom-model utilities.
 - Targeted ESLint passed for the new helper and test. Full-file lint of `BasicChatPageClient.js` still reports its two pre-existing React `setState-in-effect` findings and existing `<img>` warnings; the new code introduced no additional lint finding.
 - The production build reached webpack but failed on an unrelated Windows temporary-socket permission error: `EACCES: permission denied, readlink ...\\Temp\\socket_381660727`, followed by Next's `FlightClientEntryPlugin` secondary error. A separate webpack development compiler started on port 20129, compiled `/(dashboard)/dashboard/basic-chat/page` successfully, and served the page with HTTP 200. The expected `better-sqlite3` binding fallback to `node:sqlite` was non-fatal. The temporary development server was stopped, and its generated untracked root `AGENTS.md` was removed.
+
+## 2026-11-25: Upstream 0.5.123 merge
+
+### Git state
+
+- Merged `decolua/master` (`5ae63d22`, `# v0.5.123 (2026-11-22)`) into fork `master` (`85b2d462`), advancing upstream from `1855aa44` (`v0.5.119`).
+
+### Conflict and auto-merge resolutions
+
+- `package.json`: bumped root `version` to `0.5.123` (matching `cli/package.json` and `CHANGELOG.md`).
+- `open-sse/handlers/chatCore.js`: combined upstream `reaAllowEnabled` parameter with fork `modelOverride` and `requestSignal` parameters on `handleChatCore`.
+- `open-sse/handlers/embeddingsCore.js`: kept both fork `embeddingsFetch` custom-header/undici fetch helper and upstream `resolveDeclaredInputType` (`input_type` resolution for asymmetric embedding models).
+- `src/app/api/models/route.js`: normalized built-in provider IDs with `ALIAS_TO_ID[m.provider] || m.provider`, keeping both fork `override` (`contextWindow`) and upstream `thinkingLevels` (`thinking_levels`) on built-in and custom models.
+- `src/app/api/providers/[id]/models/route.js`: deduplicated the auto-merged `open-sse/providers/shared.js` import line and merged `antigravity` to retain fork `buildOAuthResolver` (401/403 OAuth refresh and token persistence, optional `project` payload) while adding upstream Hub fingerprint headers (`X-Client-Name: antigravity`, `X-Client-Version: ANTIGRAVITY_IDE_VERSION`) and rich metadata parsing (`contextLength`, `maxOutputTokens`, `isVL`, `isReasoning`, excluding internal/disabled/`tab_` entries, with array fallback).
+- `src/app/api/providers/[id]/test/testUtils.js`: kept both `customProviderFetch` and `ANTIGRAVITY_IDE_USER_AGENT` imports.
+- `src/app/api/v1/models/route.js`: in `comboSeatCapabilities`, kept fork `getOverrideEntry` / `applyContextWindowOverride` while stripping trailing `(level)` thinking suffixes before capability and override lookup.
+- `tests/unit/v1-models-client-adaptation.test.js`: stubbed `globalThis.fetch` in the two `GET /v1/models` and `buildModelsList` integration tests so upstream's new `LIVE_MODEL_RESOLVERS.opencode` (`https://opencode.ai/zen/v1/models`) falls back deterministically to the static catalog and custom-provider fetch-avoidance ignores the OpenCode endpoint.
+
+### Verification
+
+- Installed updated root dependencies (`npm install --no-audit --no-fund`), updating `next` to `16.4.6`, `node-forge` to `1.4.4`, `@next/third-parties` to `16.4.6`, and `eslint-config-next` to `16.4.6`.
+- `node --check` passed on all 6 resolved JS source files; `rg` confirmed zero conflict markers.
+- Targeted ESLint passed with 0 errors/warnings across all 6 resolved JS source files and `tests/unit/v1-models-client-adaptation.test.js`.
+- Targeted Vitest passed: 19/19 files (301/301 tests) covering resolved routes/handlers, overrides, recovery, retries, and client adaptation; plus 23/23 additional upstream feature unit files (221/221 tests) and `node --test tests/unit/nvidia-params.test.js` (9/9 passed).
+- Full `tests/unit` suite (`451` files): 415 passed, 4 skipped, 32 failed — failures were pre-existing Windows SQLite `EBUSY` cleanup hooks, `tests/__baseline__/known-fails.txt` entries, fork-intentional `mimo-free` `noAuth=false`, `chatCore` refactor regex count in `opencode-go-session.test.js`, `bypassNextjsFetch` mock mismatch in `nous-provider-routes.test.js`, and the two `v1-models-client-adaptation.test.js` cases subsequently fixed and verified passing.
+- `npm --prefix cli run build` succeeded cleanly at `0.5.123` (`Next.js 16.4.6`), generating standalone output and minified MITM server bundle under `cli/app` (non-fatal `better-sqlite3` native fallback to `node:sqlite` and missing Windows `du`).
